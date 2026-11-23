@@ -1,13 +1,8 @@
-# variant-filtering-visuals
+# ckok-msc-2026-variantfiltering
 
+This repository contains Python scripts to generate independent visualizations in the form of interactive `.html` plot outputs for evaluating human germline Next Generation Sequencing (NGS) data in variant filtering workflows, as well as a standalone workflow evaluation script to monitor workflow performance.
 
-This repository contains Python scripts to generate independant visualizations in the form of interactive `.html` plot outputs for evaluating human germline Next Generation Sequencing (NGS) data in variant filtering workflows. 
-
-The scripts extract and process variant data loaded into a [Hail](https://hail.is/) MatrixTable (converting relevant metrics into [pandas](https://pandas.pydata.org/) DataFrames for downstream processing) and output standalone, interactive figures generated with [Plotly](https://plotly.com/python/) and [Bokeh](https://docs.bokeh.org/).
-
-This repository contains Python scripts to generate independent visualizations in the form of interactive `.html` plot outputs for evaluating human germline Next Generation Sequencing (NGS) data in variant filtering workflows, as well as standalone workflow evaluation tools to monitor pipeline performance and audit data integrity.
-
-The visualization scripts extract and process variant data loaded into a [Hail](https://hail.is/) MatrixTable (converting relevant metrics into [pandas](https://pandas.pydata.org/) DataFrames for downstream processing) and output standalone, interactive figures generated with [Plotly](https://plotly.com/python/) and [Bokeh](https://docs.bokeh.org/). Complementing these visual outputs, the repository includes an `analysis/` directory containing resource profiling tools and downstream validation scripts to ensure comprehensive performance tracking and quality control across the entire variant evaluation pipeline.
+The visualization scripts extract and process variant data loaded into a [Hail](https://hail.is/) MatrixTable (converting relevant metrics into [pandas](https://pandas.pydata.org/) DataFrames for downstream processing) and output standalone, interactive figures generated with [Plotly](https://plotly.com/python/) and [Bokeh](https://docs.bokeh.org/). Complementing these visual outputs, the repository includes an `analysis/` directory containing a resource profiling script for performance tracking across the variant filtering workflow (executed in Jupyter Notebook).
 
 
 ## 📁 Repository Structure
@@ -19,8 +14,7 @@ variant-filtering-visuals/
 │   └── my_dataset.mt/       # hail MatrixTable folder containing sample QC metrics
 ├── analysis/                # Workflow evaluation & validation scripts
 │   ├── metrics.py           # Jupyter cell profiling & resource usage capture
-│   ├── data_audit.R         # (Upcoming) R script for variant removal/retention audit
-│   └── README.md            # Documentation for analysis tools
+│   └── README.md            # Documentation for analysis script
 ├── generate_pca.py          # Visualization script (PCA)
 ├── generate_titv_plot.py    # Visualization script (Ti/Tv)
 ├── generate_sunburst.py     # Visualization script (Sunburst)
@@ -32,15 +26,13 @@ variant-filtering-visuals/
 
 ## 🛠️ Environment & Prerequisites
 
-### Dependencies
-Install the required packages using `pip`:
+### Execution Environment (Container)
 
-```bash
-pip install hail pandas bokeh plotly psutil
-```
-*Note: Hail requires Python 3.8+ and Java 8 or 11. Performance profiling requires `psutil` within an active IPython/Jupyter environment.*
+The Jupyter Notebook integrating these scripts is executed within a pre-configured Apptainer container containing all required dependencies (`Hail`, `pandas`, `Bokeh`, `Plotly`, `psutil`, and more).
 
-## 🚀 Workflow & Execution
+- Container Image URL: [Docker Hail](https://hub.docker.com/repository/docker/phelelani/nf-bioinftools/tags/hail_v0.2.139/)
+
+## 🚀 Workflow Execution
 
 ### 1. Generating Visulaizations
 
@@ -62,7 +54,7 @@ Each script outputs or overwrites its corresponding `.html` file. Open any gener
 
 ### 2. Running Performance Profiling
 
-Refer to `analysis/README.md` for instructions.
+To capture total and per-cell execution runtime, peak RAM, and CPU core utilization during Jupyter Notebook execution, refer to the setup instructions provided in `analysis/README.md` to embed metrics.py into notebook workflow.
 
 ## 👤 Author & Acknowledgments
 * **Contributor:** Chrizelle Kok (@chrizelle-kok)

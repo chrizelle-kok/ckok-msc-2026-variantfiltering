@@ -1,9 +1,9 @@
 # Workflow Evaluation & Validation Scripts
 
-This directory contains utility scripts for evaluating execution performance and auditing data integrity throughout the variant filtering pipeline.
+This directory contains the utility script for evaluating execution performance throughout the variant filtering workflow.
 
 
-## 🛠️ Scripts & Tools
+## 🛠️ Script
 
 ### 1. `metrics.py` (Jupyter Performance Profiling)
 * **Language:** Python (`psutil`, `pandas`, `IPython`)
@@ -12,12 +12,6 @@ This directory contains utility scripts for evaluating execution performance and
 * **Outputs:**
   * `per_step_execution_report.csv` — Granular cell-by-cell runtime and resource consumption.
   * `total_workflow_summary.csv` — Aggregated runtime, peak core usage, and peak RAM consumption.
-
-
-### 2. `data_audit.R` (Variant Retention & Filtering Audit)
-* **Language:** R
-* **Purpose:** Verify filtering execution to confirm accurate retention/removal of genomic variants across filtering steps.
-* **Usage:** Execution instructions will be updated upon script finalization.
 
 
 ## 👤 AI Disclosure
