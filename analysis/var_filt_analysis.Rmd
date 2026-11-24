@@ -1,0 +1,753 @@
+---
+title: "Variant Filtering Analysis"
+author: "Chrizelle Kok"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    html_preview: false
+always_allow_html: true
+---
+
+```{r cleanup, include=FALSE}
+# Clear workspace and force memory release
+rm(list = ls(all.names = TRUE))
+gc(verbose = FALSE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Variant Filtering Audit
+
+### Purpose
+
+The purpose of this analysis is to ensure that filters are functioning correctly. An audit needs to be performed to test whether variants met criteria to be retained or removed.
+
+### Datasets
+
+Workflow was tested on two datasets:
+
+- ***MADCaP:*** **678,988 variants** across **212 samples** *(dataset M)*.
+- ***DDD-Africa:*** **1,433,459 variants** across **1274 samples** *(dataset D)*.
+
+### Data
+
+Workflow utilizes Hail MatrixTable (mt) data structure for scalable genomic analysis. Variants retained (PASS) and removed (FAIL) were imported from mt to a TSV output for analysis. PASS variants were saved at the final stage, after all filters had been applied. FAIL variants were saved after each filter. There were 9  **(F01-F09)** assessed in total, those applied during *Variant Filtering*. *Raw Data QC* filters were not assessed (splitting multi-allelic sites and removing missing and NA's). *Rows* data was needed to assess filters: **F01 - F04 and F07 - F09**; *Entries* data was needed to assess filters: **F05 - F06**
+
+- **PASS** variants: obtained *entries* and *rows* files for both datasets (final).
+- **FAIL** variants: broken down by filter ***(F01 - F09)***.
+  - **Dataset M:** obtained *rows* data on **F01 - F09**; no *entries* data obtained
+  - **Dataset D:** obtained *rows* data on **F01 and F03 - F09**; no *entries* data obtained
+  - *Entries* data on **F05 - F07** in both datasets and *Rows* data on **F02** in dataset M was NOT obtained.
+  These files were too large for exporting:
+    - **Dataset M; F05** = 8,551,681 *entries*
+    - **Dataset D; F05** = 91,357,853	 *entries*
+    - **Dataset M; F06** = 36,097,352	 *entries*
+    - **Dataset D; F06** = 485,352,425 *entries*
+    - **Dataset D; F02** = 713,741 *rows*
+
+```{r library, results = "hide", message = FALSE}
+library(tidyverse, warn.conflicts = F, quietly = T)
+library(vroom, warn.conflicts = F, quietly = T)
+library(fs, warn.conflicts = F, quietly = T)
+```
+
+```{r directory, results = "hide", message = FALSE}
+getwd()
+setwd("C:/Users/Chrizelle/Documents/Research_Report/Analysis")
+```
+---
+
+## MADCaP Analysis
+
+```{r dataM-load, warning=FALSE, message=FALSE}
+# Define directory path
+dir_m <- path("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run1_2026.10.28/tables")
+
+# Load PASS variants
+pass_rows_m    <- vroom(path(dir_m, "madcap_FINAL_PASS_rows.tsv"), show_col_types = FALSE)
+pass_entries_m <- vroom(path(dir_m, "madcap_FINAL_PASS_entries_entries.tsv"), show_col_types = FALSE)
+
+# Load F01 to F09 FAIL variants (F06 skipped)
+fail_F01_m <- vroom(path(dir_m, "madcap_F01_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F02_m <- vroom(path(dir_m, "madcap_F02_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F03_m <- vroom(path(dir_m, "madcap_F03_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F04_m <- vroom(path(dir_m, "madcap_F04_FAIL_rows.tsv"), show_col_types = FALSE)
+# F05 skipped: ZYG, AB, GQ and DP are entry fields not present in row export
+# F06 skipped: ZYG is an entry field not present in row export
+fail_F07_m <- vroom(path(dir_m, "madcap_F07_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F08_m <- vroom(path(dir_m, "madcap_F08_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F09_m <- vroom(path(dir_m, "madcap_F09_FAIL_rows.tsv"), show_col_types = FALSE)
+
+cat("Dataset M loaded successfully.\n")
+```
+
+```{r inspection-dataM, results='hide', message=FALSE, warning=FALSE}
+
+## Dataset M: Structure Inspection by File
+
+# Retained Variants (Row Annotations)
+cat("--- pass_rows_m ---\n")
+glimpse(pass_rows_m)
+
+# Retained Variants (Entry Annotations)
+cat("\n--- pass_entries2_m ---\n")
+glimpse(pass_entries_m)
+
+# Filter 01: Failed Variants
+cat("--- fail_F01_m ---\n")
+glimpse(fail_F01_m)
+
+# Filter 02: Failed Variants
+cat("--- fail_F02_m ---\n")
+glimpse(fail_F02_m)
+
+# Filter 03: Failed Variants
+cat("--- fail_F03_m ---\n")
+glimpse(fail_F03_m)
+
+# Filter 04: Failed Variants
+cat("--- fail_F04_m ---\n")
+glimpse(fail_F04_m)
+
+# Filter 07: Failed Variants
+cat("--- fail_F07_m ---\n")
+glimpse(fail_F07_m)
+
+# Filter 08: Failed Variants
+cat("--- fail_F08_m ---\n")
+glimpse(fail_F08_m)
+
+# Filter 09: Failed Variants
+cat("--- fail_F09_m ---\n")
+glimpse(fail_F09_m)
+```
+
+F01 Check
+
+```{r audit-F01-dataM}
+
+# 1. Filter Criteria & Thresholds
+less_severe_so <- c(
+  "incomplete_terminal_codon_variant", "intergenic_variant", "intron_variant", "non_coding_transcript_exon_variant", "non_coding_transcript_variant", "splice_donor_5th_base_variant", "splice_donor_region_variant", "splice_polypyrimidine_tract_variant", "splice_region_variant", "start_retained_variant", "stop_retained_variant", "synonymous_variant"
+)
+
+so_pattern <- paste(less_severe_so, collapse = "|")
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F01_m: Every variant MUST have LOW impact AND a less severe SO term
+fail_F01_violations <- fail_F01_m %>%
+  filter(
+    !(str_detect(info.CSQ_IMPACT, "LOW") & str_detect(info.CSQ_Most_Severe, so_pattern))
+  )
+
+## Audit pass_rows_m: NO variant should have LOW impact AND a less severe SO term
+pass_F01_violations <- pass_rows_m %>%
+  filter(
+    str_detect(info.CSQ_IMPACT, "LOW") & str_detect(info.CSQ_Most_Severe, so_pattern)
+  )
+
+# 3. Audit Results Summary
+cat("--- F01 AUDIT RESULTS (Dataset M) ---\n")
+cat("Total F01 failed variants evaluated :", nrow(fail_F01_m), "\n")
+cat("F01 Failed File Violations          :", nrow(fail_F01_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F01_violations), "\n")
+```
+F02 Check
+
+```{r audit-F02-dataM}
+
+# 1. Filter Criteria & Thresholds
+# Uses less_severe_so and so_pattern defined in audit-F01-dataM
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F02_m: Every variant MUST have MODIFIER impact AND a less severe SO term
+fail_F02_violations <- fail_F02_m %>%
+  filter(
+    !(str_detect(info.CSQ_IMPACT, "MODIFIER") & str_detect(info.CSQ_Most_Severe, so_pattern))
+  )
+
+## Audit pass_rows_m: NO variant should have MODIFIER impact AND a less severe SO term
+pass_F02_violations <- pass_rows_m %>%
+  filter(
+    str_detect(info.CSQ_IMPACT, "MODIFIER") & str_detect(info.CSQ_Most_Severe, so_pattern)
+  )
+
+# 3. Audit Results Summary
+cat("--- F02 AUDIT RESULTS (Dataset M) ---\n")
+cat("Total F02 failed variants evaluated :", nrow(fail_F02_m), "\n")
+cat("F02 Failed File Violations          :", nrow(fail_F02_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F02_violations), "\n")
+
+```
+F03 Check
+
+```{r audit-F03-dataM}
+
+# 1. Filter Criteria & Thresholds
+# Threshold: AF < 0.05 or missing across African population databases
+af_threshold <- 0.05
+
+## Helper function to parse numeric AF values cleanly (handles brackets or NAs)
+parse_af <- function(x) {
+  as.numeric(str_remove_all(as.character(x), "\\[|\\]"))
+}
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F03_m: Every variant MUST FAIL the AFR AF criteria across ALL 4 sources
+fail_F03_violations <- fail_F03_m %>%
+  mutate(
+    af_gnomADe = parse_af(info.CSQ_gnomADe_AFR_AF),
+    af_gnomADg = parse_af(info.CSQ_gnomADg_AFR_AF),
+    af_afr     = parse_af(info.CSQ_AFR_AF),
+    af_1000g   = parse_af(info.CSQ_1000Gp3_AF),
+    
+    # Check if variant satisfies pass condition for any source
+    pass_f03_cond = (is.na(af_gnomADe) | af_gnomADe < af_threshold) |
+                    (is.na(af_gnomADg) | af_gnomADg < af_threshold) |
+                    (is.na(af_afr)     | af_afr     < af_threshold) |
+                    (is.na(af_1000g)   | af_1000g   < af_threshold)
+  ) %>%
+  filter(pass_f03_cond == TRUE) # Violation if a failed variant met passing criteria
+
+## Audit pass_rows_m: NO retained variant should FAIL the AFR AF criteria
+pass_F03_violations <- pass_rows_m %>%
+  mutate(
+    af_gnomADe = parse_af(info.CSQ_gnomADe_AFR_AF),
+    af_gnomADg = parse_af(info.CSQ_gnomADg_AFR_AF),
+    af_afr     = parse_af(info.CSQ_AFR_AF),
+    af_1000g   = parse_af(info.CSQ_1000Gp3_AF),
+    
+    pass_f03_cond = (is.na(af_gnomADe) | af_gnomADe < af_threshold) |
+                    (is.na(af_gnomADg) | af_gnomADg < af_threshold) |
+                    (is.na(af_afr)     | af_afr     < af_threshold) |
+                    (is.na(af_1000g)   | af_1000g   < af_threshold)
+  ) %>%
+  filter(pass_f03_cond == FALSE) # Violation if a passed variant failed criteria
+
+# 3. Audit Results Summary
+cat("--- F03 AUDIT RESULTS (Dataset M) ---\n")
+cat("Total F03 failed variants evaluated :", nrow(fail_F03_m), "\n")
+cat("F03 Failed File Violations          :", nrow(fail_F03_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F03_violations), "\n")
+```
+F04 Check
+
+```{r audit-F04-dataM}
+
+# 1. Filter Criteria & Thresholds
+# Threshold for dataset allele frequency (AF < 0.05 for polymorphic alt allele)
+# af_threshold already in environment
+
+## Fast vectorized helper to parse pipe-separated Hail arrays ("REF | ALT") and return ALT (index 1)
+parse_alt_val_fast <- function(x) {
+  parts <- str_split_fixed(as.character(x), "\\s*[|,]\\s*", 2)
+  val_str <- ifelse(parts[, 2] != "", parts[, 2], parts[, 1])
+  as.numeric(val_str)
+}
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F04_m: Every variant MUST FAIL the dataset AF criteria
+fail_F04_violations <- fail_F04_m %>%
+  mutate(
+    ac_alt = parse_alt_val_fast(`variant_qc.AC`),
+    af_alt = parse_alt_val_fast(`variant_qc.AF`),
+    
+    is_polymorphic = (!is.na(ac_alt) & ac_alt != 0) & (!is.na(af_alt) & af_alt != 0),
+    pass_f04_cond  = is_polymorphic & (!is.na(af_alt) & af_alt < af_threshold)
+  ) %>%
+  filter(pass_f04_cond == TRUE)
+
+## Audit pass_rows_m: NO retained variant should FAIL the dataset AF criteria
+pass_F04_violations <- pass_rows_m %>%
+  mutate(
+    ac_alt = parse_alt_val_fast(`variant_qc.AC`),
+    af_alt = parse_alt_val_fast(`variant_qc.AF`),
+    
+    is_polymorphic = (!is.na(ac_alt) & ac_alt != 0) & (!is.na(af_alt) & af_alt != 0),
+    pass_f04_cond  = is_polymorphic & (!is.na(af_alt) & af_alt < af_threshold)
+  ) %>%
+  filter(pass_f04_cond == FALSE)
+
+# 3. Audit Results Summary
+cat("--- F04 AUDIT RESULTS (Dataset M) ---\n")
+cat("Total F04 failed variants evaluated :", nrow(fail_F04_m), "\n")
+cat("F04 Failed File Violations          :", nrow(fail_F04_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F04_violations), "\n")
+```
+F07 Check
+
+```{r audit-F07-dataM}
+
+# 1. Filter Criteria & Thresholds
+# Variant passes F07 if ANY damaging condition is met OR if the annotation is missing (NA)
+
+## Vectorized helper function to extract index [0] (first element) as numeric
+parse_first_num <- function(x) {
+  parts <- str_split_fixed(as.character(x), "\\s*[|,]\\s*", 2)
+  val_clean <- str_remove_all(parts[, 1], "\\[|\\]|\\s")
+  as.numeric(val_clean)
+}
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F07_m: Every variant MUST FAIL all damaging criteria (i.e. pass_f07_cond == FALSE)
+fail_F07_violations <- fail_F07_m %>%
+  mutate(
+    cadd      = parse_first_num(info.CSQ_CADD_PHRED),
+    gerp      = parse_first_num(info.CSQ_GERP___RS),
+    splice_ag = parse_first_num(info.CSQ_SpliceAI_pred_DS_AG),
+    splice_al = parse_first_num(info.CSQ_SpliceAI_pred_DS_AL),
+    splice_dg = parse_first_num(info.CSQ_SpliceAI_pred_DS_DG),
+    splice_dl = parse_first_num(info.CSQ_SpliceAI_pred_DS_DL),
+    revel     = parse_first_num(info.CSQ_REVEL_score),
+    
+    sift_str  = as.character(info.CSQ_SIFT),
+    poly_str  = as.character(info.CSQ_PolyPhen),
+    
+    pass_f07_cond = (is.na(cadd)      | cadd > 20) |
+                    (is.na(sift_str)  | str_detect(sift_str, "deleterious")) |
+                    (is.na(poly_str)  | str_detect(poly_str, "damaging")) |
+                    (is.na(gerp)      | gerp > 2) |
+                    (is.na(splice_ag) | splice_ag > 0.5) |
+                    (is.na(splice_al) | splice_al > 0.5) |
+                    (is.na(splice_dg) | splice_dg > 0.5) |
+                    (is.na(splice_dl) | splice_dl > 0.5) |
+                    (is.na(revel)     | revel > 0.7)
+  ) %>%
+  filter(pass_f07_cond == TRUE)
+
+## Audit pass_rows_m: NO retained variant should FAIL all damaging criteria
+pass_F07_violations <- pass_rows_m %>%
+  mutate(
+    cadd      = parse_first_num(info.CSQ_CADD_PHRED),
+    gerp      = parse_first_num(info.CSQ_GERP___RS),
+    splice_ag = parse_first_num(info.CSQ_SpliceAI_pred_DS_AG),
+    splice_al = parse_first_num(info.CSQ_SpliceAI_pred_DS_AL),
+    splice_dg = parse_first_num(info.CSQ_SpliceAI_pred_DS_DG),
+    splice_dl = parse_first_num(info.CSQ_SpliceAI_pred_DS_DL),
+    revel     = parse_first_num(info.CSQ_REVEL_score),
+    
+    sift_str  = as.character(info.CSQ_SIFT),
+    poly_str  = as.character(info.CSQ_PolyPhen),
+    
+    pass_f07_cond = (is.na(cadd)      | cadd > 20) |
+                    (is.na(sift_str)  | str_detect(sift_str, "deleterious")) |
+                    (is.na(poly_str)  | str_detect(poly_str, "damaging")) |
+                    (is.na(gerp)      | gerp > 2) |
+                    (is.na(splice_ag) | splice_ag > 0.5) |
+                    (is.na(splice_al) | splice_al > 0.5) |
+                    (is.na(splice_dg) | splice_dg > 0.5) |
+                    (is.na(splice_dl) | splice_dl > 0.5) |
+                    (is.na(revel)     | revel > 0.7)
+  ) %>%
+  filter(pass_f07_cond == FALSE)
+
+# 3. Audit Results Summary
+cat("--- F07 AUDIT RESULTS (Dataset M) ---\n")
+cat("Total F07 failed variants evaluated :", nrow(fail_F07_m), "\n")
+cat("F07 Failed File Violations          :", nrow(fail_F07_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F07_violations), "\n")
+```
+F08 Check
+
+```{r audit-F08-dataM}
+
+# 1. Filter Criteria & Thresholds
+# F08 removes variants where n_samples_with_gt == 0 (no samples have a defined GT).
+# Since fail_F08_m is empty (0 variants removed), we audit pass_entries_m to verify
+# every retained variant has a defined genotype in at least one sample.
+
+# 2. Rule Compliance Audit
+
+## Calculate count of defined genotypes per variant in pass_entries_m
+variant_gt_counts <- pass_entries_m %>%
+  group_by(across(any_of(c("locus", "alleles", "v")))) %>%
+  summarize(
+    n_samples_with_gt = sum(!is.na(GT) & GT != "./." & GT != "." & GT != ""),
+    .groups = "drop"
+  )
+
+## Audit pass_entries_m: NO retained variant should have 0 defined genotypes
+pass_F08_violations <- variant_gt_counts %>%
+  filter(n_samples_with_gt == 0)
+
+# 3. Audit Results Summary
+cat("--- F08 AUDIT RESULTS (Dataset M) ---\n")
+cat("Total F08 failed variants evaluated :", ifelse(exists("fail_F08_m"), nrow(fail_F08_m), 0), "\n")
+cat("F08 Failed File Violations          : 0 (No failed variants removed)\n")
+cat("Passed Entries Violations           :", nrow(pass_F08_violations), "\n")
+```
+F09 Check
+
+```{r audit-F09-dataM}
+
+# 1. Filter Criteria & Thresholds
+# F09 is a target gene-list filter. Because no gene list was supplied during run execution,
+# no variants were flagged or removed.
+
+# 2. Audit Results Summary
+cat("--- F09 AUDIT RESULTS (Dataset M) ---\n")
+cat("Status                              : NOT APPLICABLE / UNEVALUATED\n")
+cat("Reason                              : No gene list provided during workflow execution\n")
+cat("Total F09 failed variants evaluated : 0\n")
+cat("Passed Rows Violations              : 0\n")
+```
+
+```{r offloadM}
+# List of Dataset M objects and audit result variables to remove
+objects_to_remove <- c(
+  "pass_rows_m", "pass_entries_m", "pass_entries1_m", "pass_entries2_m",
+  "fail_F01_m", "fail_F02_m", "fail_F03_m", "fail_F04_m", "fail_F05_m",
+  "fail_F07_m", "fail_F08_m", "fail_F09_m",
+  "fail_F01_violations", "pass_F01_violations",
+  "fail_F02_violations", "pass_F02_violations",
+  "fail_F03_violations", "pass_F03_violations",
+  "fail_F04_violations", "pass_F04_violations",
+  "fail_F07_violations", "pass_F07_violations",
+  "fail_F08_violations", "pass_F08_violations",
+  "variant_gt_counts"
+)
+
+# Remove only objects that currently exist in the environment
+rm(list = intersect(objects_to_remove, ls()))
+
+# Force garbage collection to reclaim RAM
+gc()
+```
+
+---
+
+## DDD-Africa Analysis
+
+```{r dataD-load, warning=FALSE, message=FALSE}
+# Define directory path
+dir_d <- path("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run1_2026.10.28/tables")
+
+# Load PASS variants
+pass_rows_d    <- vroom(path(dir_d, "ddd-africa_FINAL_PASS_rows.tsv"), show_col_types = FALSE)
+pass_entries_d <- vroom(path(dir_d, "ddd-africa_FINAL_PASS_entries_entries.tsv"), show_col_types = FALSE)
+
+# Load F01 to F09 FAIL variants (F02 and F06 skipped)
+fail_F01_d <- vroom(path(dir_d, "ddd-africa_F01_FAIL_rows.tsv"), show_col_types = FALSE)
+# F02 skipped: IMPACT == MODIFIER file too large to export in Dataset D
+fail_F03_d <- vroom(path(dir_d, "ddd-africa_F03_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F04_d <- vroom(path(dir_d, "ddd-africa_F04_FAIL_rows.tsv"), show_col_types = FALSE)
+# F05 skipped: ZYG, AB,GQ and DP are an entry fields not present in row export
+# F06 skipped: ZYG is an entry field not present in row export
+fail_F07_d <- vroom(path(dir_d, "ddd-africa_F07_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F08_d <- vroom(path(dir_d, "ddd-africa_F08_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F09_d <- vroom(path(dir_d, "ddd-africa_F09_FAIL_rows.tsv"), show_col_types = FALSE)
+
+cat("Dataset D loaded successfully.\n")
+```
+
+```{r inspection-dataD, results='hide', message=FALSE, warning=FALSE}
+
+# Retained Variants (Row Annotations)
+cat("--- pass_rows_d ---\n")
+glimpse(pass_rows_d)
+
+# Retained Variants (Entry Annotations)
+cat("\n--- pass_entries_d ---\n")
+glimpse(pass_entries_d)
+
+# Filter 01: Failed Variants
+cat("--- fail_F01_d ---\n")
+glimpse(fail_F01_d)
+
+# Filter 02: Failed Variants (Note: Excluded/Unassessable; file missing)
+
+# Filter 03: Failed Variants
+cat("--- fail_F03_d ---\n")
+glimpse(fail_F03_d)
+
+# Filter 04: Failed Variants
+cat("--- fail_F04_d ---\n")
+glimpse(fail_F04_d)
+
+# Filter 07: Failed Variants
+cat("--- fail_F07_d ---\n")
+glimpse(fail_F07_d)
+
+# Filter 08: Failed Variants
+cat("--- fail_F08_d ---\n")
+glimpse(fail_F08_d)
+
+# Filter 09: Failed Variants
+cat("--- fail_F09_d ---\n")
+glimpse(fail_F09_d)
+```
+
+F01 Check
+
+```{r audit-F01-dataD}
+
+# 1. Rule Compliance Audit (Reusing existing `so_pattern`)
+
+## Audit fail_F01_d: Every variant MUST have LOW impact AND a less severe SO term
+fail_F01_violations <- fail_F01_d %>%
+  filter(
+    !(str_detect(info.CSQ_IMPACT, "LOW") & str_detect(info.CSQ_Most_Severe, so_pattern))
+  )
+
+## Audit pass_rows_d: NO retained variant should have LOW impact AND a less severe SO term
+pass_F01_violations <- pass_rows_d %>%
+  filter(
+    str_detect(info.CSQ_IMPACT, "LOW") & str_detect(info.CSQ_Most_Severe, so_pattern)
+  )
+
+# 2. Audit Results Summary
+cat("--- F01 AUDIT RESULTS (Dataset D) ---\n")
+cat("Total F01 failed variants evaluated :", nrow(fail_F01_d), "\n")
+cat("F01 Failed File Violations          :", nrow(fail_F01_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F01_violations), "\n")
+```
+F03 Check
+
+```{r audit-F03-dataD}
+
+# 1. Filter Criteria & Thresholds (Reusing af_threshold from environment)
+
+## Helper function to parse numeric AF values cleanly (handles brackets or NAs)
+if (!exists("parse_af")) {
+  parse_af <- function(x) {
+    as.numeric(str_remove_all(as.character(x), "\\[|\\]"))
+  }
+}
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F03_d: Every variant MUST FAIL the AFR AF criteria across ALL 4 sources
+fail_F03_violations <- fail_F03_d %>%
+  mutate(
+    af_gnomADe = parse_af(info.CSQ_gnomADe_AFR_AF),
+    af_gnomADg = parse_af(info.CSQ_gnomADg_AFR_AF),
+    af_afr     = parse_af(info.CSQ_AFR_AF),
+    af_1000g   = parse_af(info.CSQ_1000Gp3_AF),
+    
+    # Check if variant satisfies pass condition for any source
+    pass_f03_cond = (is.na(af_gnomADe) | af_gnomADe < af_threshold) |
+                    (is.na(af_gnomADg) | af_gnomADg < af_threshold) |
+                    (is.na(af_afr)     | af_afr     < af_threshold) |
+                    (is.na(af_1000g)   | af_1000g   < af_threshold)
+  ) %>%
+  filter(pass_f03_cond == TRUE)
+
+## Audit pass_rows_d: NO retained variant should FAIL the AFR AF criteria
+pass_F03_violations <- pass_rows_d %>%
+  mutate(
+    af_gnomADe = parse_af(info.CSQ_gnomADe_AFR_AF),
+    af_gnomADg = parse_af(info.CSQ_gnomADg_AFR_AF),
+    af_afr     = parse_af(info.CSQ_AFR_AF),
+    af_1000g   = parse_af(info.CSQ_1000Gp3_AF),
+    
+    pass_f03_cond = (is.na(af_gnomADe) | af_gnomADe < af_threshold) |
+                    (is.na(af_gnomADg) | af_gnomADg < af_threshold) |
+                    (is.na(af_afr)     | af_afr     < af_threshold) |
+                    (is.na(af_1000g)   | af_1000g   < af_threshold)
+  ) %>%
+  filter(pass_f03_cond == FALSE)
+
+# 3. Audit Results Summary
+cat("--- F03 AUDIT RESULTS (Dataset D) ---\n")
+cat("Total F03 failed variants evaluated :", nrow(fail_F03_d), "\n")
+cat("F03 Failed File Violations          :", nrow(fail_F03_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F03_violations), "\n")
+```
+F04 Check
+
+```{r audit-F04-dataD}
+
+# 1. Filter Criteria & Thresholds
+# Threshold for dataset allele frequency (AF < 0.05 for polymorphic alt allele)
+# af_threshold already in environment
+
+## Fast vectorized helper to parse pipe-separated Hail arrays ("REF | ALT") and return ALT (index 1))
+if (!exists("parse_alt_val_fast")) {
+  parse_alt_val_fast <- function(x) {
+    parts <- str_split_fixed(as.character(x), "\\s*[|,]\\s*", 2)
+    val_str <- ifelse(parts[, 2] != "", parts[, 2], parts[, 1])
+    as.numeric(val_str)
+  }
+}
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F04_d: Every variant MUST FAIL the dataset AF criteria
+fail_F04_violations <- fail_F04_d %>%
+  mutate(
+    ac_alt = parse_alt_val_fast(`variant_qc.AC`),
+    af_alt = parse_alt_val_fast(`variant_qc.AF`),
+    
+    is_polymorphic = (!is.na(ac_alt) & ac_alt != 0) & (!is.na(af_alt) & af_alt != 0),
+    pass_f04_cond  = is_polymorphic & (!is.na(af_alt) & af_alt < af_threshold)
+  ) %>%
+  filter(pass_f04_cond == TRUE)
+
+## Audit pass_rows_d: NO retained variant should FAIL the dataset AF criteria
+pass_F04_violations <- pass_rows_d %>%
+  mutate(
+    ac_alt = parse_alt_val_fast(`variant_qc.AC`),
+    af_alt = parse_alt_val_fast(`variant_qc.AF`),
+    
+    is_polymorphic = (!is.na(ac_alt) & ac_alt != 0) & (!is.na(af_alt) & af_alt != 0),
+    pass_f04_cond  = is_polymorphic & (!is.na(af_alt) & af_alt < af_threshold)
+  ) %>%
+  filter(pass_f04_cond == FALSE)
+
+# 3. Audit Results Summary
+cat("--- F04 AUDIT RESULTS (Dataset D) ---\n")
+cat("Total F04 failed variants evaluated :", nrow(fail_F04_d), "\n")
+cat("F04 Failed File Violations          :", nrow(fail_F04_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F04_violations), "\n")
+```
+F07 Check
+
+```{r audit-F07-dataD}
+
+# 1. Filter Criteria & Thresholds
+# Variant passes F07 if ANY damaging condition is met OR if the annotation is missing (NA)
+
+## Vectorized helper function to extract index [0] (first element) as numeric
+parse_first_num <- function(x) {
+  parts <- str_split_fixed(as.character(x), "\\s*[|,]\\s*", 2)
+  val_clean <- str_remove_all(parts[, 1], "\\[|\\]|\\s")
+  as.numeric(val_clean)
+}
+
+# 2. Rule Compliance Audit
+
+## Audit fail_F07_d: Every variant MUST FAIL all damaging criteria (i.e. pass_f07_cond == FALSE)
+fail_F07_violations <- fail_F07_d %>%
+  mutate(
+    cadd      = parse_first_num(info.CSQ_CADD_PHRED),
+    gerp      = parse_first_num(info.CSQ_GERP___RS),
+    splice_ag = parse_first_num(info.CSQ_SpliceAI_pred_DS_AG),
+    splice_al = parse_first_num(info.CSQ_SpliceAI_pred_DS_AL),
+    splice_dg = parse_first_num(info.CSQ_SpliceAI_pred_DS_DG),
+    splice_dl = parse_first_num(info.CSQ_SpliceAI_pred_DS_DL),
+    revel     = parse_first_num(info.CSQ_REVEL_score),
+    
+    sift_str  = as.character(info.CSQ_SIFT),
+    poly_str  = as.character(info.CSQ_PolyPhen),
+    
+    pass_f07_cond = (is.na(cadd)      | cadd > 20) |
+                    (is.na(sift_str)  | str_detect(sift_str, "deleterious")) |
+                    (is.na(poly_str)  | str_detect(poly_str, "damaging")) |
+                    (is.na(gerp)      | gerp > 2) |
+                    (is.na(splice_ag) | splice_ag > 0.5) |
+                    (is.na(splice_al) | splice_al > 0.5) |
+                    (is.na(splice_dg) | splice_dg > 0.5) |
+                    (is.na(splice_dl) | splice_dl > 0.5) |
+                    (is.na(revel)     | revel > 0.7)
+  ) %>%
+  filter(pass_f07_cond == TRUE)
+
+## Audit pass_rows_d: NO retained variant should FAIL all damaging criteria
+pass_F07_violations <- pass_rows_d %>%
+  mutate(
+    cadd      = parse_first_num(info.CSQ_CADD_PHRED),
+    gerp      = parse_first_num(info.CSQ_GERP___RS),
+    splice_ag = parse_first_num(info.CSQ_SpliceAI_pred_DS_AG),
+    splice_al = parse_first_num(info.CSQ_SpliceAI_pred_DS_AL),
+    splice_dg = parse_first_num(info.CSQ_SpliceAI_pred_DS_DG),
+    splice_dl = parse_first_num(info.CSQ_SpliceAI_pred_DS_DL),
+    revel     = parse_first_num(info.CSQ_REVEL_score),
+    
+    sift_str  = as.character(info.CSQ_SIFT),
+    poly_str  = as.character(info.CSQ_PolyPhen),
+    
+    pass_f07_cond = (is.na(cadd)      | cadd > 20) |
+                    (is.na(sift_str)  | str_detect(sift_str, "deleterious")) |
+                    (is.na(poly_str)  | str_detect(poly_str, "damaging")) |
+                    (is.na(gerp)      | gerp > 2) |
+                    (is.na(splice_ag) | splice_ag > 0.5) |
+                    (is.na(splice_al) | splice_al > 0.5) |
+                    (is.na(splice_dg) | splice_dg > 0.5) |
+                    (is.na(splice_dl) | splice_dl > 0.5) |
+                    (is.na(revel)     | revel > 0.7)
+  ) %>%
+  filter(pass_f07_cond == FALSE)
+
+# 3. Audit Results Summary
+cat("--- F07 AUDIT RESULTS (Dataset D) ---\n")
+cat("Total F07 failed variants evaluated :", nrow(fail_F07_d), "\n")
+cat("F07 Failed File Violations          :", nrow(fail_F07_violations), "\n")
+cat("Passed Rows Violations              :", nrow(pass_F07_violations), "\n")
+```
+Check F08
+
+```{r audit-F08-dataD}
+
+# 1. Filter Criteria & Thresholds
+# F08 removes variants where n_samples_with_gt == 0 (no samples have a defined GT).
+# Since fail_F08_d is empty (0 variants removed), we audit pass_entries_d to verify
+# every retained variant has a defined genotype in at least one sample.
+
+# 2. Rule Compliance Audit
+
+## Calculate count of defined genotypes per variant in pass_entries_d
+variant_gt_counts <- pass_entries_d %>%
+  group_by(across(any_of(c("locus", "alleles", "v")))) %>%
+  summarize(
+    n_samples_with_gt = sum(!is.na(GT) & GT != "./." & GT != "." & GT != ""),
+    .groups = "drop"
+  )
+
+## Audit pass_entries_d: NO retained variant should have 0 defined genotypes
+pass_F08_violations <- variant_gt_counts %>%
+  filter(n_samples_with_gt == 0)
+
+# 3. Audit Results Summary
+cat("--- F08 AUDIT RESULTS (Dataset D) ---\n")
+cat("Total F08 failed variants evaluated :", ifelse(exists("fail_F08_d"), nrow(fail_F08_d), 0), "\n")
+cat("F08 Failed File Violations          : 0 (No failed variants removed)\n")
+cat("Passed Entries Violations           :", nrow(pass_F08_violations), "\n")
+```
+Check F09
+
+```{r audit-F09-dataD}
+
+# 1. Filter Criteria & Thresholds
+# F09 is a target gene-list filter. Because no gene list was supplied during run execution,
+# no variants were flagged or removed.
+
+# 2. Audit Results Summary
+cat("--- F09 AUDIT RESULTS (Dataset D) ---\n")
+cat("Status                              : NOT APPLICABLE / UNEVALUATED\n")
+cat("Reason                              : No gene list provided during workflow execution\n")
+cat("Total F09 failed variants evaluated : 0\n")
+cat("Passed Rows Violations              : 0\n")
+```
+
+
+```{r offloadD}
+
+# List of Dataset D objects and audit result variables to remove
+objects_to_remove <- c(
+  "pass_rows_d", "pass_entries_d",
+  "fail_F01_d", "fail_F02_d", "fail_F03_d", "fail_F04_d", "fail_F05_d",
+  "fail_F07_d", "fail_F08_d", "fail_F09_d",
+  "fail_F01_violations", "pass_F01_violations",
+  "fail_F02_violations", "pass_F02_violations",
+  "fail_F03_violations", "pass_F03_violations",
+  "fail_F04_violations", "pass_F04_violations",
+  "fail_F07_violations", "pass_F07_violations",
+  "fail_F08_violations", "pass_F08_violations",
+  "variant_gt_counts"
+)
+
+# Remove only objects that currently exist in the environment
+rm(list = intersect(objects_to_remove, ls()))
+
+# Force garbage collection to reclaim RAM
+gc()
+```
+

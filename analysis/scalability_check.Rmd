@@ -1,0 +1,453 @@
+---
+title: "Scalability Test"
+author: "Chrizelle Kok"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    html_preview: false
+always_allow_html: true
+---
+
+```{r cleanup, include=FALSE}
+# Clear workspace and force memory release
+rm(list = ls(all.names = TRUE))
+gc(verbose = FALSE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Scalability checks
+
+### Purpose
+
+The purpose of this analysis is to determine if the workflow is scalable. Scalability refers to its ability to handle massive and rapidly growing amounts of biological data.
+
+### Datasets
+
+- ***MADCaP:*** **678,988 variants** across **212 samples** *(dataset M)*.
+- ***DDD-Africa:*** **1,433,459 variants** across **1274 samples** *(dataset D)*.
+
+### Data
+
+The existing size difference between these two datasets was used for testing scalability and resource efficiency. Comparing *Dataset M* and *Dataset D* side-by-side directly highlights the workflow's scaling factor. We evaluated the computational performance, memory footprint, and processor utilization of the workflow as data volume expands from Dataset M to Dataset D. This workflow was assigned 500GB of memory (RAM) and 40 cores of CPU for execution.
+
+Since reproducability checks showed stable execution across the different runs, the per-step metrics collected will be aggregated. Resident set memory (RAM RSS in MB) was tracked to verify proper offloading and confirm that memory pressure resets between filtering steps without leaks. Furthermore, per-step and overall execution times were collected to identify computationally intensive bottleneck stages and quantify the overall runtime scaling. Lastly, average multi-core CPU use was evaluated relative to the 40 allocated cores to assess hardware utilization efficiency across steps.
+
+```{r library, results = "hide", message = FALSE}
+library(tidyverse, warn.conflicts = F, quietly = T)
+library(data.table, warn.conflicts = F, quietly = T)
+library(scales, warn.conflicts = F, quietly = T)
+library(knitr, warn.conflicts = F, quietly = T)
+library(kableExtra, warn.conflicts = F, quietly = T)
+```
+
+```{r directory, results = "hide", message = FALSE}
+getwd()
+setwd("C:/Users/Chrizelle/Documents/Research_Report/Analysis")
+```
+--- 
+
+## Analysis
+
+```{r load-inspect, results='hide', message=FALSE, warning=FALSE}
+
+# Helper function to auto-detect delimiter (comma vs tab) for every file
+load_metric_file <- function(path) {
+  data.table::fread(path) %>% as_tibble()
+}
+
+# Load Dataset M individual run files
+m_r1_step <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run1_2026.10.28/tables/per_step_execution_report.tsv")
+m_r1_sum  <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run1_2026.10.28/tables/total_workflow_summary.tsv")
+
+m_r2_step <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run2_2026.10.29/tables/per_step_execution_report.tsv")
+m_r2_sum  <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run2_2026.10.29/tables/total_workflow_summary.tsv")
+
+m_r3_step <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run3_2026.10.29/tables/per_step_execution_report.tsv")
+m_r3_sum  <- read_csv("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run3_2026.10.29/tables/total_workflow_summary.tsv")
+
+# Load Dataset D individual run files
+d_r1_step <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run2_2026.10.29/tables/per_step_execution_report.tsv")
+d_r1_sum  <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run2_2026.10.29/tables/total_workflow_summary.tsv")
+
+d_r2_step <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run3_2026.10.29/tables/per_step_execution_report.tsv")
+d_r2_sum  <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run3_2026.10.29/tables/total_workflow_summary.tsv")
+
+d_r3_step <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run4_2026.10.29/tables/per_step_execution_report.tsv")
+d_r3_sum  <- load_metric_file("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run4_2026.10.29/tables/total_workflow_summary.tsv")
+
+# Build unified objects for streamlined plotting and aggregation
+all_per_step_metrics <- bind_rows(
+  m_r1_step %>% mutate(dataset = "Dataset M", run = "Run 1"),
+  m_r2_step %>% mutate(dataset = "Dataset M", run = "Run 2"),
+  m_r3_step %>% mutate(dataset = "Dataset M", run = "Run 3"),
+  d_r1_step %>% mutate(dataset = "Dataset D", run = "Run 1"),
+  d_r2_step %>% mutate(dataset = "Dataset D", run = "Run 2"),
+  d_r3_step %>% mutate(dataset = "Dataset D", run = "Run 3")
+)
+
+all_summary_metrics <- bind_rows(
+  m_r1_sum %>% mutate(dataset = "Dataset M", run = "Run 1"),
+  m_r2_sum %>% mutate(dataset = "Dataset M", run = "Run 2"),
+  m_r3_sum %>% mutate(dataset = "Dataset M", run = "Run 3"),
+  d_r1_sum %>% mutate(dataset = "Dataset D", run = "Run 1"),
+  d_r2_sum %>% mutate(dataset = "Dataset D", run = "Run 2"),
+  d_r3_sum %>% mutate(dataset = "Dataset D", run = "Run 3")
+)
+
+# Glimpse inspection
+cat("--- PER-STEP METRICS STRUCTURE ---\n")
+glimpse(all_per_step_metrics)
+
+cat("\n--- OVERALL WORKFLOW SUMMARY STRUCTURE ---\n")
+glimpse(all_summary_metrics)
+
+```
+
+```{r fix-all-summary-metrics, results='hide', message=FALSE, warning=FALSE}
+
+# Loader function that forces correct delimiter splitting for summary files
+load_summary_clean <- function(path) {
+  df <- data.table::fread(path, data.table = FALSE)
+  
+  # If fread loaded the entire row as 1 single header string, re-split using readr
+  if (ncol(df) == 1) {
+    col_str <- colnames(df)[1]
+    if (grepl("\t", col_str)) {
+      df <- readr::read_tsv(path, show_col_types = FALSE)
+    } else if (grepl(",", col_str)) {
+      df <- readr::read_csv(path, show_col_types = FALSE)
+    }
+  }
+  
+  return(as_tibble(df))
+}
+
+# Reload summary objects with the robust loader
+m_r1_sum <- load_summary_clean("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run1_2026.10.28/tables/total_workflow_summary.tsv")
+m_r2_sum <- load_summary_clean("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run2_2026.10.29/tables/total_workflow_summary.tsv")
+m_r3_sum <- load_summary_clean("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_madcap_outdir_run2_2026.10.29/tables/total_workflow_summary.tsv")
+
+d_r1_sum <- load_summary_clean("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run2_2026.10.29/tables/total_workflow_summary.tsv")
+d_r2_sum <- load_summary_clean("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run3_2026.10.29/tables/total_workflow_summary.tsv")
+d_r3_sum <- load_summary_clean("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run4_2026.10.29/tables/total_workflow_summary.tsv")
+
+# Re-bind all summary metrics cleanly
+all_summary_metrics <- bind_rows(
+  m_r1_sum %>% mutate(dataset = "Dataset M", run = "Run 1"),
+  m_r2_sum %>% mutate(dataset = "Dataset M", run = "Run 2"),
+  m_r3_sum %>% mutate(dataset = "Dataset M", run = "Run 3"),
+  d_r1_sum %>% mutate(dataset = "Dataset D", run = "Run 1"),
+  d_r2_sum %>% mutate(dataset = "Dataset D", run = "Run 2"),
+  d_r3_sum %>% mutate(dataset = "Dataset D", run = "Run 3")
+)
+
+# Verify clean structure
+cat("--- CLEANED OVERALL WORKFLOW SUMMARY STRUCTURE ---\n")
+glimpse(all_summary_metrics)
+```
+
+
+Memory Footprint Across Workflow Execution
+
+```{r plot-mem, fig.width=10, fig.height=6}
+
+# Aggregate RAM RSS across the 3 runs per dataset and cell step
+aggregated_ram <- all_per_step_metrics %>%
+  group_by(dataset, cell_step) %>%
+  summarise(
+    mean_ram_mb = mean(ram_rss_mb),
+    sd_ram_mb   = sd(ram_rss_mb),
+    .groups     = "drop"
+  )
+
+# Render RAM trajectory plot
+p1 <- ggplot(aggregated_ram, aes(x = cell_step, y = mean_ram_mb, color = dataset, fill = dataset)) +
+  geom_ribbon(
+    aes(ymin = pmax(0, mean_ram_mb - sd_ram_mb), ymax = mean_ram_mb + sd_ram_mb), 
+    alpha = 0.2, 
+    color = NA
+  ) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  scale_x_continuous(breaks = seq(0, 140, by = 10)) +
+  scale_y_continuous(labels = scales::comma_format(suffix = " MB")) +
+  
+  scale_color_manual(
+    values = c("Dataset M" = "#2b5c8f", "Dataset D" = "#d95f02"),
+    labels = c("Dataset M" = "MADCaP", "Dataset D" = "DDD-Africa")
+  ) +
+  scale_fill_manual(
+    values = c("Dataset M" = "#2b5c8f", "Dataset D" = "#d95f02"),
+    labels = c("Dataset M" = "MADCaP", "Dataset D" = "DDD-Africa")
+  ) +
+  
+  # CHANGE LEGEND TITLE HERE
+  labs(
+    title = "Memory Footprint Profile Across Workflow Execution",
+    subtitle = "Mean Resident Set Size (RAM RSS in MB) across 3x runs; ribbons indicate ±1 SD",
+    x = "Jupyter Notebook Execution Step (Cell)",
+    y = "RAM RSS Usage",
+    color = "Cohort / Dataset", # Legend Title for Color
+    fill  = "Cohort / Dataset"  # Legend Title for Fill
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+    axis.title = element_text(color = "grey40"),
+    axis.title.x = element_text(color = "grey40", margin = margin(t = 8)),
+    axis.title.y = element_text(color = "grey40", margin = margin(r = 8))
+  )
+
+# Render plot
+print(p1)
+
+# Export standalone high-res image
+ggsave(
+  filename = "memory_footprint_profile.png", 
+  plot = p1, 
+  width = 10, 
+  height = 6, 
+  dpi = 600
+)
+```
+
+Execution Time Breakdown per Step (Bottleneck Analysis)
+
+```{r plot-bottleneck, fig.width=10, fig.height=6}
+
+# Quick diagnostic: inspect top execution times and step 1 values
+cat("--- TOP 5 LONGEST STEPS IN DATASET ---\n")
+all_per_step_metrics %>%
+  select(dataset, run, cell_step, matches("time|sec|duration")) %>%
+  arrange(desc(across(matches("time|sec|duration"))[[1]])) %>%
+  head(5) %>%
+  print()
+
+# Identify duration column
+time_col <- intersect(c("step_time_sec", "execution_time_sec", "duration_sec", "time_sec"), names(all_per_step_metrics))[1]
+
+# Filter out Step 1 (kernel initialization artifact) and aggregate per step
+aggregated_time <- all_per_step_metrics %>%
+  rename(step_duration = !!sym(time_col)) %>%
+  filter(cell_step > 1) %>% # Exclude initialization outlier
+  group_by(dataset, cell_step) %>%
+  summarise(
+    mean_time_sec = mean(step_duration),
+    sd_time_sec   = sd(step_duration),
+    .groups       = "drop"
+  )
+
+# Render Bottleneck Analysis plot (properly scaled Y-axis)
+p2 <- ggplot(aggregated_time, aes(x = cell_step, y = mean_time_sec, color = dataset, fill = dataset)) +
+  geom_ribbon(
+    aes(ymin = pmax(0, mean_time_sec - sd_time_sec), ymax = mean_time_sec + sd_time_sec), 
+    alpha = 0.2, 
+    color = NA
+  ) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  scale_x_continuous(breaks = seq(0, 140, by = 10)) +
+  scale_y_continuous(labels = scales::comma_format(suffix = " s")) +
+  scale_color_manual(
+    values = c("Dataset M" = "#2b5c8f", "Dataset D" = "#d95f02"),
+    labels = c("Dataset M" = "MADCaP", "Dataset D" = "DDD-Africa")
+  ) +
+  scale_fill_manual(
+    values = c("Dataset M" = "#2b5c8f", "Dataset D" = "#d95f02"),
+    labels = c("Dataset M" = "MADCaP", "Dataset D" = "DDD-Africa")
+  ) +
+  labs(
+    title = "Execution Time Profile Across Workflow Steps",
+    subtitle = "Mean step duration (seconds) across 3x runs; ribbons indicate ±1 SD",
+    x = "Jupyter Notebook Execution Step (Cell)",
+    y = "Step Execution Time (Seconds)",
+    color = "Cohort / Dataset",
+    fill  = "Cohort / Dataset"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+    axis.title = element_text(color = "grey40"),
+    axis.title.x = element_text(color = "grey40", margin = margin(t = 8)),
+    axis.title.y = element_text(color = "grey40", margin = margin(r = 8))
+  )
+
+# Display plot
+print(p2)
+
+# Save high-res PNG file
+ggsave(
+  filename = "execution_time_bottlenecks.png", 
+  plot = p2, 
+  width = 10, 
+  height = 6, 
+  dpi = 600
+)
+```
+
+Compare Total Runtime between Datasets
+
+```{r total-time}
+
+# Aggregate total workflow runtime metrics by dataset
+runtime_comparison <- all_summary_metrics %>%
+  group_by(dataset) %>%
+  summarise(
+    mean_sec = mean(total_runtime_sec),
+    sd_sec   = sd(total_runtime_sec),
+    mean_min = mean(total_runtime_min),
+    sd_min   = sd(total_runtime_min),
+    .groups  = "drop"
+  ) %>%
+  mutate(
+    mean_hr = mean_min / 60,
+    scaling_factor = mean_sec / mean_sec[dataset == "Dataset M"]
+  )
+
+# Render clean table
+runtime_comparison %>%
+  transmute(
+    Dataset = dataset,
+    `Mean Runtime (sec)` = sprintf("%.2f ± %.2f", mean_sec, sd_sec),
+    `Mean Runtime (min)` = sprintf("%.2f ± %.2f", mean_min, sd_min),
+    `Mean Runtime (hr)`  = sprintf("%.2f hrs", mean_hr),
+    `Relative Scale`     = sprintf("%.2fx", scaling_factor)
+  ) %>%
+  knitr::kable(
+    caption = "Aggregate Workflow Runtime Comparison (Mean ± SD across 3 Runs)",
+    align = c("l", "r", "r", "r", "r")
+  )
+```
+
+Core Utilization Efficiency Across Workflow Execution
+
+```{r core-use, fig.width=10, fig.height=6}
+
+# Dynamically identify core metric column and aggregate mean & SD across 3 runs
+core_col <- intersect(
+  c("cores_used", "avg_cores_used", "peak_cores_used", "core_count", "cores"), 
+  names(all_per_step_metrics)
+)[1]
+
+aggregated_cores <- all_per_step_metrics %>%
+  rename(step_cores = !!sym(core_col)) %>%
+  filter(cell_step > 1) %>% # Exclude Step 1 initialization outlier
+  group_by(dataset, cell_step) %>%
+  summarise(
+    mean_cores = mean(step_cores),
+    sd_cores   = sd(step_cores),
+    .groups    = "drop"
+  )
+
+# Render Core Utilization plot
+p3 <- ggplot(aggregated_cores, aes(x = cell_step, y = mean_cores, color = dataset, fill = dataset)) +
+  geom_ribbon(
+    aes(ymin = pmax(0, mean_cores - sd_cores), ymax = mean_cores + sd_cores), 
+    alpha = 0.2, 
+    color = NA
+  ) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  scale_x_continuous(breaks = seq(0, 140, by = 10)) +
+  scale_y_continuous(labels = scales::comma_format(suffix = " cores")) +
+  scale_color_manual(
+    values = c("Dataset M" = "#2b5c8f", "Dataset D" = "#d95f02"),
+    labels = c("Dataset M" = "MADCaP", "Dataset D" = "DDD-Africa")
+  ) +
+  scale_fill_manual(
+    values = c("Dataset M" = "#2b5c8f", "Dataset D" = "#d95f02"),
+    labels = c("Dataset M" = "MADCaP", "Dataset D" = "DDD-Africa")
+  ) +
+  labs(
+    title = "Core Utilisation Profile Across Workflow Steps",
+    subtitle = "Mean active core usage across 3x runs; ribbons indicate ±1 SD",
+    x = "Jupyter Notebook Execution Step (Cell)",
+    y = "Active Core Count / CPU Usage",
+    color = "Cohort / Dataset",
+    fill  = "Cohort / Dataset"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+    axis.title = element_text(color = "grey40"),
+    axis.title.x = element_text(color = "grey40", margin = margin(t = 8)),
+    axis.title.y = element_text(color = "grey40", margin = margin(r = 8))
+  )
+
+# Render plot in R Markdown
+print(p3)
+
+# Export high-resolution standalone PNG
+ggsave(
+  filename = "core_utilization_efficiency.png", 
+  plot = p3, 
+  width = 10, 
+  height = 6, 
+  dpi = 600
+)
+```
+
+
+```{r combined-figure}
+
+library(patchwork)
+library(ggplot2)
+
+# 1. Base formatting helper: sets tick spacing and strips subplot titles
+format_scalability_base <- function(p) {
+  p + 
+    scale_x_continuous(breaks = seq(0, 140, by = 20), expand = expansion(mult = c(0.01, 0.02))) +
+    theme(
+      plot.title = element_blank(),
+      plot.subtitle = element_blank(),
+      axis.title.y = element_text(size = 9.5, color = "grey30", margin = margin(r = 10)),
+      axis.text.x = element_text(size = 8.5, color = "grey30"),
+      axis.text.y = element_text(size = 8.5, color = "grey30"),
+      plot.margin = margin(t = 6, r = 15, b = 10, l = 15)
+    )
+}
+
+# 2. Configure individual panels
+# Panels A & B retain tick marks and numbers, but hide the X-axis title text
+p1_clean <- format_scalability_base(p1) + theme(axis.title.x = element_blank())
+p3_clean <- format_scalability_base(p3) + theme(axis.title.x = element_blank())
+
+# Panel C retains both tick numbers and the shared X-axis title
+p2_clean <- format_scalability_base(p2) + theme(
+  axis.title.x = element_text(size = 9.5, color = "grey30", margin = margin(t = 8))
+)
+
+# 3. Combine vertically with tags (A, B, C) and single legend
+combined_scalability <- (p1_clean / p3_clean / p2_clean) +
+  plot_layout(guides = "collect", heights = c(1, 1, 1.15)) +
+  plot_annotation(tag_levels = 'A') &
+  theme(
+    plot.tag = element_text(size = 12, face = "bold"),
+    legend.position = "bottom"
+  )
+
+# 4. Render and Save
+print(combined_scalability)
+
+ggsave(
+  filename = "combined_scalability_vstack.pdf",
+  plot = combined_scalability,
+  width = 8.5,
+  height = 10,
+  dpi = 600
+)
+
+```
+
