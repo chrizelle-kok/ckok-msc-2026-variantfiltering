@@ -1,0 +1,1406 @@
+Known Pathogenic Variation Capture Analysis
+================
+Chrizelle Kok
+2026-11-24
+
+## Ability to Capture Known Pathogenic Variation
+
+### Purpose
+
+The purpose of this analysis is to assess the variant filtering
+workflow’s ability to capture known pathogenic variation. This allows us
+to calculate evaluation metrics such as accuracy, precision, false
+positive rate (capture rate/FPR) and false negative rate (FNR).
+
+### Dataset
+
+- ***DDD-Africa:*** **1,433,459 variants** across **1274 samples**
+  *(dataset D)*.
+
+### Data
+
+A list was obtained from the PI of DDD-Africa - Prof Zané Lombard, on
+27/10/2026, which has all the variants the project has identified and
+classified as **Likely Pathogenic** or **Pathogenic** according to the
+American College of Medical Genetics and Genomics and the Association
+for Molecular Pathology (ACMG-AMP) guidelines (PMID: 25741868). This
+list described variants according to gene symbol, transcript, HGVSc and
+HGVSp notation.
+
+The variants from this list will serve as the benchmark against the
+retained (PASS) and removed (FAIL) files obtained from executing the
+variant filtering workflow with the DDD-Africa dataset. The *rows* data
+from variants removed (FAIL) and retained (PASS) will be used, as the
+notations used to describe the pathogenic variants are annotated as
+*row* fields.
+
+``` r
+library(tidyverse, warn.conflicts = F, quietly = T)
+library(janitor, warn.conflicts = F, quietly = T)
+library(knitr, warn.conflicts = F, quietly = T)
+library(kableExtra, warn.conflicts = F, quietly = T)
+library(vroom, warn.conflicts = F, quietly = T)
+library(fs, warn.conflicts = F, quietly = T)
+library(writexl, warn.conflicts = F, quietly = T)
+```
+
+``` r
+getwd()
+setwd("C:/Users/Chrizelle/Documents/Research_Report/Analysis")
+```
+
+------------------------------------------------------------------------
+
+## Analysis
+
+``` r
+# Define File Directories
+dir_d <- path("C:/Users/Chrizelle/Documents/Research_Report/Analysis/var_filt_ddd-africa_outdir_run2_2026.10.29/tables")
+dir_bench <- path("C:/Users/Chrizelle/Documents/Research_Report/Analysis/p_var_ddd-africa")
+
+# Pathogenic Variant Benchmark List (.csv)
+pathogenic_bench <- read_csv(
+  path(dir_bench, "ddd_p_varaints_27.10.26.csv"), 
+  show_col_types = FALSE
+) %>%
+  clean_names()
+
+# Load PASS variants
+pass_d    <- vroom(path(dir_d, "ddd-africa_FINAL_PASS_rows.tsv"), show_col_types = FALSE)
+
+# Load F01 to F09 FAIL variants (F02 skipped)
+fail_F01_d <- vroom(path(dir_d, "ddd-africa_F01_FAIL_rows.tsv"), show_col_types = FALSE)
+# F02 skipped: IMPACT == MODIFIER file too large to export
+fail_F03_d <- vroom(path(dir_d, "ddd-africa_F03_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F04_d <- vroom(path(dir_d, "ddd-africa_F04_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F05_d <- vroom(path(dir_d, "ddd-africa_F05_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F06_d <- vroom(path(dir_d, "ddd-africa_F06_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F07_d <- vroom(path(dir_d, "ddd-africa_F07_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F08_d <- vroom(path(dir_d, "ddd-africa_F08_FAIL_rows.tsv"), show_col_types = FALSE)
+fail_F09_d <- vroom(path(dir_d, "ddd-africa_F09_FAIL_rows.tsv"), show_col_types = FALSE)
+
+cat("Dataset loaded successfully.\n")
+```
+
+    ## Dataset loaded successfully.
+
+``` r
+# Retained Variants (Row Annotations)
+cat("--- pass_rows_d ---\n")
+glimpse(pass_d)
+
+# Benchmark Pathogenic Variants
+cat("--- pathogenic_bench ---\n")
+glimpse(pathogenic_bench)
+```
+
+Benchmark list is in a format incompatible to the variant PASS and FAIL
+files, we will need to transform it.
+
+``` r
+# 1. Parse semicolon-delimited benchmark string into discrete columns
+pathogenic_bench_parsed <- pathogenic_bench %>%
+  separate_wider_delim(
+    cols = gene_symbol_transcript_hgvs_c_hgvs_p,
+    delim = ";",
+    names = c("gene", "transcript", "hgvsc", "hgvsp"),
+    too_many = "drop",  # Drops any extra trailing empty semicolon fields
+    too_few = "align_start" # Handles rows with fewer fields gracefully
+  ) %>%
+  mutate(across(c(gene, transcript, hgvsc, hgvsp), ~ na_if(str_trim(.), "")))
+
+# 2. Inspect parsed benchmark data
+cat("--- PARSED BENCHMARK DATASET ---\n")
+glimpse(pathogenic_bench_parsed)
+head(pathogenic_bench_parsed, 10)
+```
+
+Variant PASS and FAIL files have many columns not necessary for the
+analysis. We will subset only the columns we need.
+
+``` r
+# 1. Exact required columns for benchmark matching and tracking
+selected_cols <- c(
+  "locus", 
+  "alleles", 
+  "rsid", 
+  "info.CSQ_Allele", 
+  "info.CSQ_SYMBOL", 
+  "info.CSQ_Gene", 
+  "info.CSQ_HGVSc", 
+  "info.CSQ_HGVSp", 
+  "info.CSQ_MANE_SELECT", 
+  "info.CSQ_Feature"
+)
+
+# 2. Helper function to retain only specified columns present in each dataframe
+subset_d_cols <- function(df) {
+  df %>%
+    select(any_of(selected_cols))
+}
+
+# 3. Subset PASS and FAIL datasets
+pass_d     <- subset_d_cols(pass_d)
+fail_F01_d <- subset_d_cols(fail_F01_d)
+fail_F03_d <- subset_d_cols(fail_F03_d)
+fail_F04_d <- subset_d_cols(fail_F04_d)
+fail_F05_d <- subset_d_cols(fail_F05_d)
+fail_F06_d <- subset_d_cols(fail_F06_d)
+fail_F07_d <- subset_d_cols(fail_F07_d)
+fail_F08_d <- subset_d_cols(fail_F08_d)
+fail_F09_d <- subset_d_cols(fail_F09_d)
+
+cat("Subsetting complete. Columns retained per file:", ncol(pass_d), "\n")
+glimpse(pass_d)
+head(pass_d, 10)
+```
+
+There are several mismatches in how the benchmark variants and the
+Hail/VEP PASS and FAIL variants are annotated. We will need a function
+to normalize the information to ensure exact matches can be found.
+
+Gene symbols are consistent across the data.
+
+For transcript information, the benchmark variants have either none, or
+is is described using NCBI’s MANE Select (MN), or Ensembl’s transcript
+notation (ENST). This information is also available in for the workflow
+variants, but it is located in different annotation columns. MANE Select
+transcripts have VEP cache or version numbers. These might not be
+compatible between benchmark and workflow variants since they were
+annotated at different times. The version/cache numbers thus need to be
+stripped from MANE Select transcripts.
+
+The benchmark variant’s HGVSc nomenclature simply contain c. notation
+(e.g. c.1C\>G), while the workflow FAIL and PASS variant’s HGVSc
+nomenclature combines the Ensembl transcript and the c. notation
+(e.g. ENST00004578.2:c.1C\>G). To ensure compatibility, only the
+c. notation will be used to look for matches, meaning the transcript
+information must be stripped from the HGVSc nomenclature. A similar
+process is needed for the HGVSp nomenclature (strip to only
+p. notation).
+
+``` r
+# Helper to clean Excel-to-CSV encoding artifacts (?, non-breaking spaces, Unicode dashes)
+clean_hgvs_artifacts <- function(x) {
+  x %>%
+    str_replace_all("%3D", "=") %>%
+    # Normalize Unicode en-dashes/em-dashes/minus signs to standard ASCII hyphen
+    str_replace_all("[\u2013\u2014\u2212]", "-") %>%
+    # Remove non-breaking spaces and standard whitespace
+    str_remove_all("[\u00A0\\s]") %>%
+    # If a corrupted en-dash turned into '?' between two digits (e.g., c.100?5A>G), restore '-'
+    str_replace_all("(?<=\\d)\\?(?=\\d)", "-") %>%
+    # Strip any remaining stray '?' artifacts (e.g., c.775_782?del -> c.775_782del)
+    str_remove_all("\\?")
+}
+
+# Helper to standardize HGVS coding strings to modern VEP format
+standardize_hgvsc <- function(x) {
+  clean_hgvs_artifacts(x) %>%
+    str_extract("c\\.[A-Za-z0-9_>+*().-]+") %>%
+    # Remove outer parentheses: c.(879C>T) -> c.879C>T
+    str_replace("^c\\.\\((.+)\\)$", "c.\\1") %>%
+    # Legacy delins: c.2435delGinsAT -> c.2435delinsAT
+    str_replace("(del)[ACGTNacgtn0-9]+(ins[ACGTNacgtn]+)$", "\\1\\2") %>%
+    # Legacy del, dup, inv: c.2435delG -> c.2435del | c.3403dupT -> c.3403dup
+    str_replace("(del|dup|inv)[ACGTNacgtn0-9]+$", "\\1")
+}
+
+# Helper to standardize HGVS protein strings
+standardize_hgvsp <- function(x) {
+  clean_hgvs_artifacts(x) %>%
+    str_extract("p\\.[A-Za-z0-9_*=.()-]+") %>%
+    # Remove outer parentheses: p.(Phe16Leu) -> p.Phe16Leu
+    str_replace("^p\\.\\((.+)\\)$", "p.\\1") %>%
+    # Standardize stop codons: p.Glu44* -> p.Glu44Ter
+    str_replace_all("\\*", "Ter")
+}
+
+# Helper to convert empty strings or '.' from Hail TSVs into true NA
+clean_na <- function(x) {
+  x %>%
+    str_trim() %>%
+    na_if("") %>%
+    na_if(".")
+}
+
+# Main normalization function for both workflow and benchmark tables
+normalize_annotations <- function(df, is_workflow = TRUE) {
+  if (is_workflow) {
+    df %>%
+      mutate(
+        gene_std  = toupper(clean_na(as.character(info.CSQ_SYMBOL))),
+        tx_base   = str_remove(clean_na(as.character(info.CSQ_Feature)), "\\.\\d+$"),
+        mane_base = str_remove(clean_na(as.character(info.CSQ_MANE_SELECT)), "\\.\\d+$"),
+        c_std     = standardize_hgvsc(as.character(info.CSQ_HGVSc)),
+        p_std     = standardize_hgvsp(as.character(info.CSQ_HGVSp))
+      )
+  } else {
+    df %>%
+      mutate(
+        gene_std = toupper(clean_na(as.character(gene))),
+        tx_base  = str_remove(clean_na(as.character(transcript)), "\\.\\d+$"),
+        c_std    = standardize_hgvsc(as.character(hgvsc)),
+        p_std    = standardize_hgvsp(as.character(hgvsp))
+      )
+  }
+}
+
+# Apply to datasets
+pathogenic_bench_clean <- normalize_annotations(pathogenic_bench_parsed, is_workflow = FALSE)
+pass_d_clean           <- normalize_annotations(pass_d, is_workflow = TRUE)
+```
+
+``` r
+# PART 1: BENCHMARK DATASET CHECKS
+cat("--- 1. NORMALIZED BENCHMARK DATASET ---\n")
+glimpse(pathogenic_bench_clean)
+
+# Check that legacy indels were corrected (del/dup stripped, ins preserved)
+cat("\n--- Benchmark Indel Standardization Check ---\n")
+pathogenic_bench_clean %>%
+  filter(str_detect(hgvsc, "del|dup|inv|ins")) %>%
+  select(gene, transcript, tx_base, hgvsc, c_std, hgvsp, p_std) %>%
+  print(n = 25)
+
+# Check for conversion artifacts ('?')
+cat("\n--- Benchmark '?' Artifact Check ---\n")
+pathogenic_bench_clean %>%
+  filter(str_detect(hgvsc, "\\?") | str_detect(hgvsp, "\\?")) %>%
+  select(gene, hgvsc, c_std, hgvsp, p_std) %>%
+  print(n = Inf)
+
+# PART 2: PASS DATASET CHECKS
+cat("\n--- 2. NORMALIZED PASS DATASET SUMMARY ---\n")
+cat("Total rows in pass_d_clean:", nrow(pass_d_clean), "\n")
+
+# Check population rates of normalized columns (confirm no "" or "." leaked)
+pass_d_clean %>%
+  summarise(
+    non_na_gene = sum(!is.na(gene_std)),
+    non_na_tx   = sum(!is.na(tx_base)),
+    non_na_mane = sum(!is.na(mane_base)),
+    non_na_c    = sum(!is.na(c_std)),
+    non_na_p    = sum(!is.na(p_std)),
+    # Verify version suffixes (.1, .2, etc.) were completely stripped
+    unstripped_tx_versions   = sum(str_detect(tx_base, "\\.\\d+$"), na.rm = TRUE),
+    unstripped_mane_versions = sum(str_detect(mane_base, "\\.\\d+$"), na.rm = TRUE)
+  ) %>%
+  print()
+
+# Spot-check HGVSc normalization on PASS variants (SNVs + Indels)
+cat("\n--- PASS HGVSc Spot-Check (Raw vs. Standardized) ---\n")
+pass_d_clean %>%
+  filter(!is.na(info.CSQ_HGVSc), str_detect(info.CSQ_HGVSc, "del|dup|ins|>")) %>%
+  select(gene_std, info.CSQ_Feature, tx_base, info.CSQ_MANE_SELECT, mane_base, info.CSQ_HGVSc, c_std) %>%
+  slice_head(n = 15) %>%
+  print()
+
+# Spot-check HGVSp normalization on PASS variants (parentheses, %3D, Ter)
+cat("\n--- PASS HGVSp Spot-Check (Raw vs. Standardized) ---\n")
+pass_d_clean %>%
+  filter(!is.na(info.CSQ_HGVSp)) %>%
+  select(gene_std, info.CSQ_HGVSp, p_std) %>%
+  slice_head(n = 15) %>%
+  print()
+
+# PART 3: PRE-MATCHING SANITY CHECK (GENE SYMBOL OVERLAP)
+
+cat("\n--- 3. BENCHMARK GENE PRESENCE IN PASS DATASET ---\n")
+bench_genes <- pathogenic_bench_clean %>%
+  filter(!is.na(gene_std)) %>%
+  distinct(gene_std)
+
+missing_genes_in_pass <- bench_genes %>%
+  anti_join(pass_d_clean, by = "gene_std")
+
+cat("Unique benchmark genes:", nrow(bench_genes), "\n")
+cat("Benchmark genes completely absent from PASS:", nrow(missing_genes_in_pass), "\n")
+if (nrow(missing_genes_in_pass) > 0) {
+  print(missing_genes_in_pass, n = Inf)
+}
+```
+
+We will now check and see how many of the benchmark variants are present
+in the PASS variants from the workflow. To maximize the matches,
+multiple combinations of the nomenclature and notation will be used in a
+tiered manner to identify variants.
+
+``` r
+# Helper to extract the exact nucleotide change or indel signature from HGVSc
+get_nuc_change <- function(c_vec) {
+  case_when(
+    str_detect(c_vec, "[ACGT]>[ACGT]$") ~ str_extract(c_vec, "[ACGT]>[ACGT]$"),
+    str_detect(c_vec, "delins[ACGT]+$") ~ str_extract(c_vec, "delins[ACGT]+$"),
+    str_detect(c_vec, "ins[ACGT]+$")    ~ str_extract(c_vec, "ins[ACGT]+$"),
+    str_detect(c_vec, "del$")           ~ "del",
+    str_detect(c_vec, "dup$")           ~ "dup",
+    TRUE                                ~ NA_character_
+  )
+}
+
+# 1. Build clean lookup vectors for PASS dataset (excluding NAs before pasting)
+pass_t1_enst <- pass_d_clean %>%
+  filter(!is.na(gene_std), !is.na(tx_base), !is.na(c_std)) %>%
+  transmute(key = paste(gene_std, tx_base, c_std)) %>%
+  pull(key) %>%
+  unique()
+
+pass_t1_mane <- pass_d_clean %>%
+  filter(!is.na(gene_std), !is.na(mane_base), !is.na(c_std)) %>%
+  transmute(key = paste(gene_std, mane_base, c_std)) %>%
+  pull(key) %>%
+  unique()
+
+pass_tier1 <- unique(c(pass_t1_enst, pass_t1_mane))
+
+pass_tier2 <- pass_d_clean %>%
+  filter(!is.na(gene_std), !is.na(c_std)) %>%
+  transmute(key = paste(gene_std, c_std)) %>%
+  pull(key) %>%
+  unique()
+
+pass_t4_enst <- pass_d_clean %>%
+  filter(!is.na(gene_std), !is.na(tx_base), !is.na(p_std), !p_std %in% c("p.=", "p.?")) %>%
+  transmute(key = paste(gene_std, tx_base, p_std)) %>%
+  pull(key) %>%
+  unique()
+
+pass_t4_mane <- pass_d_clean %>%
+  filter(!is.na(gene_std), !is.na(mane_base), !is.na(p_std), !p_std %in% c("p.=", "p.?")) %>%
+  transmute(key = paste(gene_std, mane_base, p_std)) %>%
+  pull(key) %>%
+  unique()
+
+pass_tier4 <- unique(c(pass_t4_enst, pass_t4_mane))
+
+pass_tier5 <- pass_d_clean %>%
+  mutate(nuc_change = get_nuc_change(c_std)) %>%
+  filter(!is.na(gene_std), !is.na(p_std), !p_std %in% c("p.=", "p.?"), !is.na(nuc_change)) %>%
+  transmute(key = paste(gene_std, p_std, nuc_change)) %>%
+  pull(key) %>%
+  unique()
+
+# 2. Evaluate tiered matching against pass_d_clean
+tier_levels <- c(
+  "Tier 1 (Gene + Tx/MANE + HGVSc)",
+  "Tier 2 (Gene + HGVSc)",
+  "Tier 3 (Gene + ins/dup Equivalent)",
+  "Tier 4 (Gene + Tx/MANE + HGVSp)",
+  "Tier 5 (Gene + HGVSp + Exact Base Change)",
+  "Not Found in PASS"
+)
+
+ins_parts <- str_match(pathogenic_bench_clean$c_std, "^c\\.(\\d+)_(\\d+)ins([ACGT]+)$")
+ins_start <- as.numeric(ins_parts[, 2])
+ins_end   <- as.numeric(ins_parts[, 3])
+ins_len   <- nchar(ins_parts[, 4])
+
+benchmark_pass_match <- pathogenic_bench_clean %>%
+  mutate(
+    nuc_change = get_nuc_change(c_std),
+    dup_c1 = case_when(
+      is.na(ins_len) ~ NA_character_,
+      ins_len == 1   ~ paste0("c.", ins_start, "dup"),
+      TRUE           ~ paste0("c.", ins_start - ins_len + 1, "_", ins_start, "dup")
+    ),
+    dup_c2 = case_when(
+      is.na(ins_len) ~ NA_character_,
+      ins_len == 1   ~ paste0("c.", ins_end, "dup"),
+      TRUE           ~ paste0("c.", ins_end, "_", ins_end + ins_len - 1, "dup")
+    ),
+    
+    key_t1 = paste(gene_std, tx_base, c_std),
+    key_t2 = paste(gene_std, c_std),
+    key_t4 = paste(gene_std, tx_base, p_std),
+    key_t5 = paste(gene_std, p_std, nuc_change),
+    
+    match_t1 = !is.na(gene_std) & !is.na(c_std) & !is.na(tx_base) & (key_t1 %in% pass_tier1),
+    match_t2 = !is.na(gene_std) & !is.na(c_std) & (key_t2 %in% pass_tier2),
+    match_t3 = !is.na(gene_std) & !is.na(dup_c1) & ((paste(gene_std, dup_c1) %in% pass_tier2) | (paste(gene_std, dup_c2) %in% pass_tier2)),
+    match_t4 = !is.na(gene_std) & !is.na(tx_base) & !is.na(p_std) & (!p_std %in% c("p.=", "p.?")) & (key_t4 %in% pass_tier4),
+    match_t5 = !is.na(gene_std) & !is.na(p_std) & (!p_std %in% c("p.=", "p.?")) & !is.na(nuc_change) & (key_t5 %in% pass_tier5),
+    
+    in_pass = match_t1 | match_t2 | match_t3 | match_t4 | match_t5,
+    match_tier_pass = factor(
+      case_when(
+        match_t1 ~ "Tier 1 (Gene + Tx/MANE + HGVSc)",
+        match_t2 ~ "Tier 2 (Gene + HGVSc)",
+        match_t3 ~ "Tier 3 (Gene + ins/dup Equivalent)",
+        match_t4 ~ "Tier 4 (Gene + Tx/MANE + HGVSp)",
+        match_t5 ~ "Tier 5 (Gene + HGVSp + Exact Base Change)",
+        TRUE     ~ "Not Found in PASS"
+      ),
+      levels = tier_levels
+    )
+  ) %>%
+  select(-nuc_change, -dup_c1, -dup_c2, -starts_with("key_t"))
+
+# 3. Single summary table across all tiers and totals
+total_bench <- nrow(benchmark_pass_match)
+
+pass_match_summary <- benchmark_pass_match %>%
+  count(match_tier_pass, name = "Count", .drop = FALSE) %>%
+  mutate(
+    Category = as.character(match_tier_pass),
+    Percent  = round((Count / total_bench) * 100, 2)
+  ) %>%
+  select(Category, Count, Percent) %>%
+  bind_rows(
+    tibble(
+      Category = "Total Found in PASS (All Tiers)",
+      Count    = sum(benchmark_pass_match$in_pass),
+      Percent  = round((sum(benchmark_pass_match$in_pass) / total_bench) * 100, 2)
+    ),
+    tibble(
+      Category = "Total Benchmark Variants",
+      Count    = total_bench,
+      Percent  = 100.00
+    )
+  )
+
+print(pass_match_summary, n = Inf)
+```
+
+    ## # A tibble: 8 × 3
+    ##   Category                                  Count Percent
+    ##   <chr>                                     <int>   <dbl>
+    ## 1 Tier 1 (Gene + Tx/MANE + HGVSc)              97    53.3
+    ## 2 Tier 2 (Gene + HGVSc)                        41    22.5
+    ## 3 Tier 3 (Gene + ins/dup Equivalent)            4     2.2
+    ## 4 Tier 4 (Gene + Tx/MANE + HGVSp)               8     4.4
+    ## 5 Tier 5 (Gene + HGVSp + Exact Base Change)     0     0  
+    ## 6 Not Found in PASS                            32    17.6
+    ## 7 Total Found in PASS (All Tiers)             150    82.4
+    ## 8 Total Benchmark Variants                    182   100
+
+While Tiers 1 through 3 match variants using their exact DNA change
+(HGVSc), Tier 4 matches on the gene, transcript, and resulting protein
+change (HGVSp). Because different DNA mutations can produce the exact
+same protein effect, we will now compare the benchmark and PASS variants
+to separate true matches written with slightly different coordinates
+from unrelated variants.
+
+``` r
+# 4. Inspect all fallback matches (Tiers 2 through 5)
+fallback_tiers <- c(
+  "Tier 2 (Gene + HGVSc)",
+  "Tier 3 (Gene + ins/dup Equivalent)",
+  "Tier 4 (Gene + Tx/MANE + HGVSp)",
+  "Tier 5 (Gene + HGVSp + Exact Base Change)"
+)
+
+benchmark_pass_match %>%
+  filter(match_tier_pass %in% fallback_tiers) %>%
+  select(gene_std, tx_base, hgvsc, c_std, p_std, match_tier_pass) %>%
+  arrange(match_tier_pass, gene_std) %>%
+  print(n = Inf, width = Inf)
+
+# 5. Audit Tier 4 (and Tier 5) protein-based matches side-by-side against PASS
+tier4_audit <- benchmark_pass_match %>%
+  mutate(bench_id = row_number()) %>%
+  filter(match_tier_pass %in% c(
+    "Tier 4 (Gene + Tx/MANE + HGVSp)",
+    "Tier 5 (Gene + HGVSp + Exact Base Change)"
+  )) %>%
+  select(
+    bench_id,
+    match_tier_pass,
+    gene_std,
+    p_std,
+    bench_tx    = tx_base,
+    bench_c     = c_std,
+    bench_raw_c = hgvsc,
+    bench_raw_p = hgvsp
+  ) %>%
+  left_join(
+    pass_d_clean %>%
+      filter(!is.na(gene_std), !is.na(p_std)) %>%
+      distinct(
+        gene_std, p_std, locus, alleles, rsid,
+        pass_tx    = tx_base,
+        pass_mane  = mane_base,
+        pass_c     = c_std,
+        pass_raw_c = info.CSQ_HGVSc,
+        pass_raw_p = info.CSQ_HGVSp
+      ),
+    by = c("gene_std", "p_std")
+  ) %>%
+  mutate(
+    same_tx = !is.na(bench_tx) & (bench_tx == pass_tx | bench_tx == pass_mane)
+  ) %>%
+  arrange(match_tier_pass, bench_id, desc(same_tx), pass_tx)
+
+View(tier4_audit)
+
+# 6. Inspect variants not found in PASS
+benchmark_pass_match %>%
+  filter(!in_pass) %>%
+  select(gene_std, transcript, tx_base, hgvsc, c_std, hgvsp, p_std) %>%
+  print(n = Inf, width = Inf)
+```
+
+5 of the 8 Tier 4 matches are genuine variants (c.3155_3178del
+vs. c.3160_3183del, c.3272_3273del vs. c.3273_3274del, c.702dup and
+c.701_702insA vs. c.710dup, and c.1675CTT vs. c.1678_1680del), where the
+benchmark and workflow simply count the same insertion or deletion from
+opposite ends of a repetitive DNA stretch. The remaining three pairs
+(c.2819del vs. c.2780del, c.961G\>A vs. c.961C\>T, and c.2265del
+vs. c.533C\>A) are completely different DNA changes that happened to
+cause the same protein effect, so they were excluded from being true
+matches.
+
+``` r
+# 1. Define the 5 manually verified Tier 4 benchmark variants (same-length shifted indels)
+valid_t4_variants <- c(
+  "c.3155_3178del",
+  "c.3272_3273del",
+  "c.702dup",
+  "c.701_702insA",
+  "c.1675CTT"
+)
+
+# 2. Split Tier 4 into kept vs. excluded and update match status
+verified_tier_levels <- c(
+  "Tier 1 (Gene + Tx/MANE + HGVSc)",
+  "Tier 2 (Gene + HGVSc)",
+  "Tier 3 (Gene + ins/dup Equivalent)",
+  "Tier 4 (Verified Shifted Indel)",
+  "Tier 5 (Gene + HGVSp + Exact Base Change)",
+  "Not Found in PASS"
+)
+
+benchmark_pass_verified <- benchmark_pass_match %>%
+  mutate(
+    tier4_status = case_when(
+      match_tier_pass == "Tier 4 (Gene + Tx/MANE + HGVSp)" & c_std %in% valid_t4_variants ~ "Valid Tier 4 (Kept)",
+      match_tier_pass == "Tier 4 (Gene + Tx/MANE + HGVSp)" ~ "Invalid Tier 4 (Excluded)",
+      TRUE ~ "Not Applicable"
+    ),
+    match_tier_verified = factor(
+      case_when(
+        tier4_status == "Valid Tier 4 (Kept)"       ~ "Tier 4 (Verified Shifted Indel)",
+        tier4_status == "Invalid Tier 4 (Excluded)" ~ "Not Found in PASS",
+        TRUE                                        ~ as.character(match_tier_pass)
+      ),
+      levels = verified_tier_levels
+    ),
+    in_pass_verified = match_tier_verified != "Not Found in PASS"
+  )
+
+# 3. Confirm split counts (5 kept, 3 excluded)
+print(table(benchmark_pass_verified$tier4_status))
+```
+
+    ## 
+    ## Invalid Tier 4 (Excluded)            Not Applicable       Valid Tier 4 (Kept) 
+    ##                         3                       174                         5
+
+``` r
+# 4. Recalculate final verified summary table for downstream metrics
+total_bench <- nrow(benchmark_pass_verified)
+
+pass_match_summary_verified <- benchmark_pass_verified %>%
+  count(match_tier_verified, name = "Count", .drop = FALSE) %>%
+  mutate(
+    Category = as.character(match_tier_verified),
+    Percent  = round((Count / total_bench) * 100, 2)
+  ) %>%
+  select(Category, Count, Percent) %>%
+  bind_rows(
+    tibble(
+      Category = "Total Verified Matches in PASS (True Positives)",
+      Count    = sum(benchmark_pass_verified$in_pass_verified),
+      Percent  = round((sum(benchmark_pass_verified$in_pass_verified) / total_bench) * 100, 2)
+    ),
+    tibble(
+      Category = "Total Benchmark Variants",
+      Count    = total_bench,
+      Percent  = 100.00
+    )
+  )
+
+print(pass_match_summary_verified, n = Inf)
+```
+
+    ## # A tibble: 8 × 3
+    ##   Category                                        Count Percent
+    ##   <chr>                                           <int>   <dbl>
+    ## 1 Tier 1 (Gene + Tx/MANE + HGVSc)                    97   53.3 
+    ## 2 Tier 2 (Gene + HGVSc)                              41   22.5 
+    ## 3 Tier 3 (Gene + ins/dup Equivalent)                  4    2.2 
+    ## 4 Tier 4 (Verified Shifted Indel)                     5    2.75
+    ## 5 Tier 5 (Gene + HGVSp + Exact Base Change)           0    0   
+    ## 6 Not Found in PASS                                  35   19.2 
+    ## 7 Total Verified Matches in PASS (True Positives)   147   80.8 
+    ## 8 Total Benchmark Variants                          182  100
+
+Several benchmark variants were not found in the PASS variant data. We
+will now see where these variants were removed by the workflow by
+attempting to track them in the FAIL data.
+
+``` r
+# Helper to extract exact nucleotide change or indel signature
+get_nuc_change <- function(c_vec) {
+  case_when(
+    str_detect(c_vec, "[ACGT]>[ACGT]$") ~ str_extract(c_vec, "[ACGT]>[ACGT]$"),
+    str_detect(c_vec, "delins[ACGT]+$") ~ str_extract(c_vec, "delins[ACGT]+$"),
+    str_detect(c_vec, "ins[ACGT]+$")    ~ str_extract(c_vec, "ins[ACGT]+$"),
+    str_detect(c_vec, "del$")           ~ "del",
+    str_detect(c_vec, "dup$")           ~ "dup",
+    TRUE                                ~ NA_character_
+  )
+}
+
+# Helper to check missing benchmark variants against a single FAIL dataset
+match_fail_dataset <- function(bench_df, fail_raw_df) {
+  if (is.null(fail_raw_df) || nrow(fail_raw_df) == 0) {
+    return(rep(NA_character_, nrow(bench_df)))
+  }
+  
+  fail_clean <- normalize_annotations(fail_raw_df, is_workflow = TRUE)
+  
+  wf_t1_enst <- fail_clean %>%
+    filter(!is.na(gene_std), !is.na(tx_base), !is.na(c_std)) %>%
+    transmute(k = paste(gene_std, tx_base, c_std)) %>%
+    pull(k)
+  
+  wf_t1_mane <- fail_clean %>%
+    filter(!is.na(gene_std), !is.na(mane_base), !is.na(c_std)) %>%
+    transmute(k = paste(gene_std, mane_base, c_std)) %>%
+    pull(k)
+  
+  wf_t1 <- unique(c(wf_t1_enst, wf_t1_mane))
+  
+  wf_t2 <- fail_clean %>%
+    filter(!is.na(gene_std), !is.na(c_std)) %>%
+    transmute(k = paste(gene_std, c_std)) %>%
+    pull(k) %>%
+    unique()
+  
+  wf_t4_enst <- fail_clean %>%
+    filter(!is.na(gene_std), !is.na(tx_base), !is.na(p_std), !p_std %in% c("p.=", "p.?")) %>%
+    transmute(k = paste(gene_std, tx_base, p_std)) %>%
+    pull(k)
+  
+  wf_t4_mane <- fail_clean %>%
+    filter(!is.na(gene_std), !is.na(mane_base), !is.na(p_std), !p_std %in% c("p.=", "p.?")) %>%
+    transmute(k = paste(gene_std, mane_base, p_std)) %>%
+    pull(k)
+  
+  wf_t4 <- unique(c(wf_t4_enst, wf_t4_mane))
+  
+  wf_t5 <- fail_clean %>%
+    mutate(nuc_change = get_nuc_change(c_std)) %>%
+    filter(!is.na(gene_std), !is.na(p_std), !p_std %in% c("p.=", "p.?"), !is.na(nuc_change)) %>%
+    transmute(k = paste(gene_std, p_std, nuc_change)) %>%
+    pull(k) %>%
+    unique()
+  
+  ins_parts <- str_match(bench_df$c_std, "^c\\.(\\d+)_(\\d+)ins([ACGT]+)$")
+  ins_start <- as.numeric(ins_parts[, 2])
+  ins_end   <- as.numeric(ins_parts[, 3])
+  ins_len   <- nchar(ins_parts[, 4])
+  
+  nuc_change <- get_nuc_change(bench_df$c_std)
+  
+  dup_c1 <- case_when(
+    is.na(ins_len) ~ NA_character_,
+    ins_len == 1   ~ paste0("c.", ins_start, "dup"),
+    TRUE           ~ paste0("c.", ins_start - ins_len + 1, "_", ins_start, "dup")
+  )
+  
+  dup_c2 <- case_when(
+    is.na(ins_len) ~ NA_character_,
+    ins_len == 1   ~ paste0("c.", ins_end, "dup"),
+    TRUE           ~ paste0("c.", ins_end, "_", ins_end + ins_len - 1, "dup")
+  )
+  
+  k1 <- paste(bench_df$gene_std, bench_df$tx_base, bench_df$c_std)
+  k2 <- paste(bench_df$gene_std, bench_df$c_std)
+  k3a <- paste(bench_df$gene_std, dup_c1)
+  k3b <- paste(bench_df$gene_std, dup_c2)
+  k4 <- paste(bench_df$gene_std, bench_df$tx_base, bench_df$p_std)
+  k5 <- paste(bench_df$gene_std, bench_df$p_std, nuc_change)
+  
+  valid_p <- !is.na(bench_df$p_std) & !(bench_df$p_std %in% c("p.=", "p.?"))
+  
+  m_t1 <- !is.na(bench_df$gene_std) & !is.na(bench_df$c_std) & !is.na(bench_df$tx_base) & (k1 %in% wf_t1)
+  m_t2 <- !is.na(bench_df$gene_std) & !is.na(bench_df$c_std) & (k2 %in% wf_t2)
+  m_t3 <- !is.na(bench_df$gene_std) & !is.na(dup_c1) & ((k3a %in% wf_t2) | (k3b %in% wf_t2))
+  m_t4 <- !is.na(bench_df$gene_std) & !is.na(bench_df$tx_base) & valid_p & (k4 %in% wf_t4)
+  m_t5 <- !is.na(bench_df$gene_std) & valid_p & !is.na(nuc_change) & (k5 %in% wf_t5)
+  
+  case_when(
+    m_t1 ~ "Tier 1",
+    m_t2 ~ "Tier 2",
+    m_t3 ~ "Tier 3",
+    m_t4 ~ "Tier 4 (verify)",
+    m_t5 ~ "Tier 5",
+    TRUE ~ NA_character_
+  )
+}
+
+# 1. Isolate the 35 benchmark variants missing from PASS
+missing_bench <- benchmark_pass_verified %>%
+  filter(!in_pass_verified)
+
+# 2. Scan all existing FAIL datasets (F01 to F09, excluding non-existent F02)
+fail_ids <- c("F01", "F03", "F04", "F05", "F06", "F07", "F08", "F09")
+
+fail_hits_mat <- sapply(fail_ids, function(fid) {
+  obj_name <- paste0("fail_", fid, "_d")
+  if (!exists(obj_name, envir = .GlobalEnv)) {
+    warning(paste("Dataset not found in environment:", obj_name))
+    return(rep(NA_character_, nrow(missing_bench)))
+  }
+  tiers <- match_fail_dataset(missing_bench, get(obj_name, envir = .GlobalEnv))
+  ifelse(!is.na(tiers), paste0(fid, " (", tiers, ")"), NA_character_)
+})
+
+if (is.null(dim(fail_hits_mat))) {
+  fail_hits_mat <- matrix(fail_hits_mat, nrow = nrow(missing_bench))
+  colnames(fail_hits_mat) <- fail_ids
+}
+
+# 3. Collapse all filter failures per variant
+missing_tracked <- missing_bench %>%
+  mutate(
+    failed_filters = apply(fail_hits_mat, 1, function(row_vals) {
+      hits <- na.omit(row_vals)
+      if (length(hits) == 0) "Not Found in FAIL" else paste(hits, collapse = "; ")
+    })
+  )
+
+# 4. Extract and format the benchmark variants missing from PASS
+missing_variants_detailed <- missing_tracked %>%
+  select(
+    gene,
+    transcript,
+    hgvsc,
+    hgvsp,
+    gene_std,
+    tx_base,
+    c_std,
+    p_std,
+    failed_filters
+  ) %>%
+  arrange(failed_filters, gene_std)
+
+# 5. Export to CSV for offline inspection in Excel / viewer
+write_csv(missing_variants_detailed, "missing_pathogenic_variants_audit.csv")
+
+# 6. Display summary and preview table
+cat("--- DETAILED LIST OF UNPASSED PATHOGENIC VARIANTS (Total: ", nrow(missing_variants_detailed), ") ---\n")
+cat("Full list exported to: missing_pathogenic_variants_audit.csv\n\n")
+
+print(
+  missing_variants_detailed %>%
+    count(failed_filters, name = "Count") %>%
+    arrange(desc(Count)),
+  n = Inf
+)
+
+knitr::kable(
+  missing_variants_detailed,
+  col.names = c("Gene", "Transcript", "HGVSc", "HGVSp", "Gene (Std)", "Tx (Std)", "c. (Std)", "p. (Std)", "Filter Failure"),
+  caption = "Benchmark Pathogenic Variants Missing from PASS"
+)
+```
+
+Some of the 35 missing benchmark variants were identified in the F05 and
+F06 FAIL files, while several others were absent from all exported FAIL
+files This was either because they were removed in F02 (for which no
+*row* file exists) or because they were never present in the input
+dataset. Because the exported FAIL files lack genotype-level entry
+details, it was not possible to confirm why these variants failed using
+those tables alone.
+
+To investigate them directly, we converted the HGVS notations of all 35
+missing variants into genomic coordinates using the [GeneBe HGVS
+converter](https://genebe.net/tools/hgvs) and queried the original
+joint-called, VEP-annotated VCF file with `bcftools`. Only 25 of the 35
+variants were present in this VCF. Upon consulting the PI, we confirmed
+that while the primary study cohort was sequenced at the Wellcome Sanger
+Institute (United Kingdom) and compiled into this joint-called VCF, a
+smaller subset of samples from a student project was sequenced locally
+at the South African Medical Research Council (SAMRC) and was not
+included in this dataset. Because those 10 variants were never part of
+the Wellcome Sanger Institute sequencing dataset, they could not be
+evaluated against the filtering workflow and were excluded from the
+benchmark list, leaving 172 benchmark variants able to be evaluated.
+Inspection of the remaining 25 variants in the original VCF confirmed
+that all 25 were genuinely removed by our filtering criteria, making
+them true FNs:
+
+- **F01 (1 variant):** Annotated with `IMPACT == LOW`.
+- **F02 (9 variants):** Annotated with `IMPACT == MODIFIER`.
+- **F05 (11 variants):** Failed genotype quality thresholds - 9 variants
+  had read depth `DP` \< 20, and 2 heterozygous (`ZYG == Het`) variants
+  had allelic balance `AB` \< 0.2.
+- **F06 (4 variants):** Genotyped as being homozygous reference
+  (`HomRef`) beacuse `GT` was 0\0.
+
+Below, we tabulate this failure breakdown before calculating the updated
+workflow evaluation metrics.
+
+``` r
+# Summarize the bcftools VCF audit for the 25 benchmark variants removed by the workflow
+fn_breakdown <- tibble(
+  Filter_Step = c(
+    "F01 (IMPACT & Consequence - LOW)",
+    "F02 (IMPACT & Consequence - MODIFIER)",
+    "F05 (Quality / Depth)",
+    "F05 (Allele Balance)",
+    "F06 (Homozygous Reference)"
+  ),
+  Failing_Criterion = c(
+    "IMPACT == LOW",
+    "IMPACT == MODIFIER",
+    "DP < 20",
+    "ZYG == Het & AB < 0.2",
+    "GT == 0/0"
+  ),
+  Variant_Count = c(1, 9, 9, 2, 4)
+) %>%
+  mutate(
+    Pct_of_FN = sprintf("%.1f%%", (Variant_Count / sum(Variant_Count)) * 100)
+  ) %>%
+  bind_rows(
+    tibble(
+      Filter_Step       = "Total Verified False Negatives (FN)",
+      Failing_Criterion = "Present in Sanger VCF; removed by workflow",
+      Variant_Count     = sum(.$Variant_Count),
+      Pct_of_FN         = "100.0%"
+    )
+  )
+
+knitr::kable(
+  fn_breakdown,
+  col.names = c("Workflow Filter", "Failing Criterion (VCF Verified)", "Variant Count", "% of Total FN"),
+  caption = "Breakdown of the 25 Evaluable Benchmark Variants Removed by Workflow Filters"
+) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+<table class="table table-striped table-hover table-condensed" style="margin-left: auto; margin-right: auto;">
+
+<caption>
+
+Breakdown of the 25 Evaluable Benchmark Variants Removed by Workflow
+Filters
+</caption>
+
+<thead>
+
+<tr>
+
+<th style="text-align:left;">
+
+Workflow Filter
+</th>
+
+<th style="text-align:left;">
+
+Failing Criterion (VCF Verified)
+</th>
+
+<th style="text-align:right;">
+
+Variant Count
+</th>
+
+<th style="text-align:left;">
+
+% of Total FN
+</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+<tr>
+
+<td style="text-align:left;">
+
+F01 (IMPACT & Consequence - LOW)
+</td>
+
+<td style="text-align:left;">
+
+IMPACT == LOW
+</td>
+
+<td style="text-align:right;">
+
+1
+</td>
+
+<td style="text-align:left;">
+
+4.0%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+F02 (IMPACT & Consequence - MODIFIER)
+</td>
+
+<td style="text-align:left;">
+
+IMPACT == MODIFIER
+</td>
+
+<td style="text-align:right;">
+
+9
+</td>
+
+<td style="text-align:left;">
+
+36.0%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+F05 (Quality / Depth)
+</td>
+
+<td style="text-align:left;">
+
+DP \< 20
+</td>
+
+<td style="text-align:right;">
+
+9
+</td>
+
+<td style="text-align:left;">
+
+36.0%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+F05 (Allele Balance)
+</td>
+
+<td style="text-align:left;">
+
+ZYG == Het & AB \< 0.2
+</td>
+
+<td style="text-align:right;">
+
+2
+</td>
+
+<td style="text-align:left;">
+
+8.0%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+F06 (Homozygous Reference)
+</td>
+
+<td style="text-align:left;">
+
+GT == 0/0
+</td>
+
+<td style="text-align:right;">
+
+4
+</td>
+
+<td style="text-align:left;">
+
+16.0%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+Total Verified False Negatives (FN)
+</td>
+
+<td style="text-align:left;">
+
+Present in Sanger VCF; removed by workflow
+</td>
+
+<td style="text-align:right;">
+
+25
+</td>
+
+<td style="text-align:left;">
+
+100.0%
+</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+We will calculate and tabulate the complete evaluation metrics.
+
+We do have to consider that some of the filters were entry based. When
+exporting the FAIL data then as rows, a row is exported if a single
+entry from that row was removed. This might cause “double counting” of
+variants, as the same row might be recorded as being removed, when a
+singular entry was removed. This was considered for calculations, and
+only unique rows were counted.
+
+``` r
+# 1. Benchmark-Level Counts (172 evaluable variants in Sanger VCF; 10 out-of-cohort SAMRC variants excluded)
+n_bench_excluded <- 10
+n_bench_total    <- nrow(benchmark_pass_verified) - n_bench_excluded
+tp               <- sum(benchmark_pass_verified$in_pass_verified)
+fn               <- n_bench_total - tp
+
+# 2. Deduplicate PASS and loaded FAIL datasets by unique variant (locus + alleles)
+pass_keys <- pass_d %>%
+  distinct(locus, alleles) %>%
+  transmute(var_key = paste(locus, alleles)) %>%
+  pull(var_key)
+
+total_pass_rows <- length(pass_keys)
+
+fail_dfs <- list(
+  F01 = fail_F01_d, F03 = fail_F03_d, F04 = fail_F04_d, F05 = fail_F05_d,
+  F06 = fail_F06_d, F07 = fail_F07_d, F08 = fail_F08_d, F09 = fail_F09_d
+)
+
+raw_fail_row_sum <- sum(sapply(fail_dfs, nrow))
+
+# Combine loaded FAIL files, remove cross-filter duplicates, and exclude variants present in PASS
+fail_unique_all <- bind_rows(lapply(fail_dfs, function(df) select(df, locus, alleles))) %>%
+  distinct(locus, alleles) %>%
+  mutate(var_key = paste(locus, alleles))
+
+fail_actually_removed <- fail_unique_all %>%
+  filter(!(var_key %in% pass_keys))
+
+total_unique_removed_loaded <- nrow(fail_actually_removed)
+
+# Factor in the 713,741 unique variants removed by F02 (MODIFIER filter)
+f02_removed_rows     <- 713741
+total_unique_removed <- total_unique_removed_loaded + f02_removed_rows
+
+# Confusion matrix counts across the complete workflow (PASS + F01-F09)
+fp <- total_pass_rows - tp
+tn <- total_unique_removed - fn
+
+# 3. Primary Metric Calculations
+sensitivity <- tp / (tp + fn)
+fnr         <- fn / (tp + fn)
+specificity <- tn / (tn + fp)
+fpr         <- fp / (fp + tn)
+precision   <- tp / (tp + fp)
+accuracy    <- (tp + tn) / (tp + tn + fp + fn)
+
+# 4. Print Deduplication & Input Reconciliation Audit
+cat("--- WORKFLOW VARIANT RECONCILIATION AUDIT ---\n")
+```
+
+    ## --- WORKFLOW VARIANT RECONCILIATION AUDIT ---
+
+``` r
+cat("Sum of raw loaded FAIL rows (with F05/F06 duplicates): ", raw_fail_row_sum, "\n")
+```
+
+    ## Sum of raw loaded FAIL rows (with F05/F06 duplicates):  1220763
+
+``` r
+cat("Unique variants actually removed (F01, F03-F09):        ", total_unique_removed_loaded, "\n")
+```
+
+    ## Unique variants actually removed (F01, F03-F09):         360575
+
+``` r
+cat("Variants removed by unexported F02 (MODIFIER):          ", f02_removed_rows, "\n")
+```
+
+    ## Variants removed by unexported F02 (MODIFIER):           713741
+
+``` r
+cat("Total unique variants removed across all filters:       ", total_unique_removed, "\n")
+```
+
+    ## Total unique variants removed across all filters:        1074316
+
+``` r
+cat("Total input variants reconciled (TP + FP + TN + FN):    ", tp + fp + tn + fn, "\n\n")
+```
+
+    ## Total input variants reconciled (TP + FP + TN + FN):     1433459
+
+``` r
+# 5. Format Summary Metrics Table
+metrics_summary <- tibble(
+  Metric = c(
+    "Benchmark Total",
+    "True Positives (TP - Verified in PASS)",
+    "False Negatives (FN - Verified Removed)",
+    "False Positives (FP - Non-benchmark in PASS)",
+    "True Negatives (TN - Total Unique Removed incl. F02)",
+    "Sensitivity / Capture Rate (TP / [TP + FN])",
+    "False Negative Rate (FN / [TP + FN])",
+    "Specificity / TNR (TN / [TN + FP])",
+    "False Positive Rate (FP / [FP + TN])",
+    "Precision / PPV (TP / [TP + FP])",
+    "Overall Dataset Accuracy ([TP + TN] / Total)"
+  ),
+  Value = c(
+    as.character(n_bench_total),
+    as.character(tp),
+    as.character(fn),
+    as.character(fp),
+    as.character(tn),
+    sprintf("%.2f%%", sensitivity * 100),
+    sprintf("%.2f%%", fnr * 100),
+    sprintf("%.2f%%", specificity * 100),
+    sprintf("%.2f%%", fpr * 100),
+    sprintf("%.4f%%", precision * 100),
+    sprintf("%.2f%%", accuracy * 100)
+  )
+)
+
+# 6. Display Table
+cat("--- WORKFLOW EVALUATION METRICS AUDIT ---\n\n")
+```
+
+    ## --- WORKFLOW EVALUATION METRICS AUDIT ---
+
+``` r
+knitr::kable(
+  metrics_summary,
+  col.names = c("Evaluation Metric / Count", "Value"),
+  caption = "Workflow Evaluation Metrics against Benchmark Pathogenic Variants (Full Workflow)"
+) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+<table class="table table-striped table-hover table-condensed" style="margin-left: auto; margin-right: auto;">
+
+<caption>
+
+Workflow Evaluation Metrics against Benchmark Pathogenic Variants (Full
+Workflow)
+</caption>
+
+<thead>
+
+<tr>
+
+<th style="text-align:left;">
+
+Evaluation Metric / Count
+</th>
+
+<th style="text-align:left;">
+
+Value
+</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+<tr>
+
+<td style="text-align:left;">
+
+Benchmark Total
+</td>
+
+<td style="text-align:left;">
+
+172
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+True Positives (TP - Verified in PASS)
+</td>
+
+<td style="text-align:left;">
+
+147
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+False Negatives (FN - Verified Removed)
+</td>
+
+<td style="text-align:left;">
+
+25
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+False Positives (FP - Non-benchmark in PASS)
+</td>
+
+<td style="text-align:left;">
+
+358996
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+True Negatives (TN - Total Unique Removed incl. F02)
+</td>
+
+<td style="text-align:left;">
+
+1074291
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+Sensitivity / Capture Rate (TP / \[TP + FN\])
+</td>
+
+<td style="text-align:left;">
+
+85.47%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+False Negative Rate (FN / \[TP + FN\])
+</td>
+
+<td style="text-align:left;">
+
+14.53%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+Specificity / TNR (TN / \[TN + FP\])
+</td>
+
+<td style="text-align:left;">
+
+74.95%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+False Positive Rate (FP / \[FP + TN\])
+</td>
+
+<td style="text-align:left;">
+
+25.05%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+Precision / PPV (TP / \[TP + FP\])
+</td>
+
+<td style="text-align:left;">
+
+0.0409%
+</td>
+
+</tr>
+
+<tr>
+
+<td style="text-align:left;">
+
+Overall Dataset Accuracy (\[TP + TN\] / Total)
+</td>
+
+<td style="text-align:left;">
+
+74.95%
+</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+Export evaluation metrics
+
+``` r
+# Export performance metrics summary table strictly to Excel (.xlsx)
+writexl::write_xlsx(metrics_summary, "dataset_ddd_evaluation_metrics.xlsx")
+
+cat("Performance metrics successfully exported to: dataset_ddd_evaluation_metrics.xlsx\n")
+```
+
+    ## Performance metrics successfully exported to: dataset_ddd_evaluation_metrics.xlsx
