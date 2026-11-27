@@ -1,6 +1,6 @@
 # ckok-msc-2026-variantfiltering
 
-This repository contains Python scripts to generate independent visualizations in the form of interactive `.html` plot outputs for evaluating human germline Next Generation Sequencing (NGS) data in variant filtering workflows, as well as a standalone workflow evaluation script to monitor workflow performance.
+This repository contains Python scripts to generate independent visualizations in the form of interactive `.html` plot outputs for evaluating human germline Next Generation Sequencing (NGS) data in variant filtering workflows, as well as a standalone workflow evaluation script to monitor workflow performance and workflow evaluation analysis in R.
 
 The visualization scripts extract and process variant data loaded into a [Hail](https://hail.is/) MatrixTable (converting relevant metrics into [pandas](https://pandas.pydata.org/) DataFrames for downstream processing) and output standalone, interactive figures generated with [Plotly](https://plotly.com/python/) and [Bokeh](https://docs.bokeh.org/). Complementing these visual outputs, the repository includes an `analysis/` directory containing a resource profiling script for performance tracking across the variant filtering workflow (executed in Jupyter Notebook) as well as R and R Markdown (`.Rmd` / `.md`) validation analyses covering variant filtering audits, pathogenic variant capture benchmarking, computational reproducibility checks, scalability assessments, and user feedback survey response plotting..
 
@@ -61,14 +61,14 @@ python generate_sunburst.py
 ```
 Each script outputs or overwrites its corresponding `.html` file. Open any generated `.html` file in your browser to inspect the interactive figure.
 
-### 2. Running Performance Profiling
+### 2. Running Performance Profiling & Evaluation Analysis
 
 To capture total and per-cell execution runtime, peak RAM, and CPU core utilization during Jupyter Notebook execution, refer to the setup instructions provided in `analysis/README.md` to embed metrics.py into notebook workflow. To inspect the R validation reports (variant filtering audit, pathogenic capture metrics, reproducibility, scalability, and survey plots), refer to `analysis/README.md.`
 
 ## 👤 Author & Acknowledgments
 * **Contributor:** Chrizelle Kok (@chrizelle-kok)
 
-* **Project Role:** Designed visualization scripts for variant filtering outputs for integration into the Quarto reporting framework. Developed workflow profiling tools.
+* **Project Role:** Designed visualization scripts for variant filtering outputs for integration into the Quarto reporting framework. Developed workflow profiling script and R analysis scripts for computational end analytical performace of the workflow
 
 * **Main Workflow Repository:** Developed under the supervision of [@phelelani](https://github.com/phelelani). This project complements the main variant filtering workflow hosted at [nf-variantfilt](https://github.com/phelelani/nf-variantfilt).
-* **Disclaimer:**  **Google Gemini** was utilized to assist in writing and refining portions of the Python code for data processing and HTML visualization generation. All generated code was independently executed, tested, and validated by the author.
+* **Disclaimer:**  **Google Gemini** was utilized to assist in writing and refining portions of the Python and R code for data processing and HTML visualization generation. All generated code was independently executed, tested, and validated by the author.
